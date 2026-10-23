@@ -1,0 +1,21 @@
+
+-- spawn_point.script
+-- Регистрирует точку появления у спавнеров игрока и ботов.
+
+local TANK_SPAWNER_URL = msg.url("main:/tank_spawner#tank_spawner")
+local BOT_SPAWNER_URL = msg.url("main:/bot_spawner#bot_spawner")
+
+function init(self)
+	local position = go.get_position()
+	local rotation = go.get_rotation()
+
+	local data = {
+		position = position,
+		rotation = rotation
+	}
+
+	msg.post(TANK_SPAWNER_URL, "register_spawn_point", data)
+	msg.post(BOT_SPAWNER_URL, "register_spawn_point", data)
+
+	print("[SPAWN POINT] Registered: " .. tostring(msg.url()))
+end

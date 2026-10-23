@@ -1,0 +1,27 @@
+function init(self)
+	self.played = false
+	print("[IMPACT] Created: " .. tostring(go.get_id()))
+end
+
+function on_message(self, message_id, message, sender)
+	if message_id ~= hash("play_effect") then
+		return
+	end
+
+	if self.played then
+		return
+	end
+
+	self.played = true
+
+	print("[IMPACT] Playing explosion animation")
+
+	sprite.play_flipbook(
+	"#sprite",
+	hash("impact"),
+	function(self, message_id, message, sender)
+		print("[IMPACT] Animation finished")
+		go.delete()
+	end
+)
+end

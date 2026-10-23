@@ -1,0 +1,19 @@
+-- tank_name.script
+-- World-space nickname displayed above each tank.
+-- Defold 1.13.1
+
+function init(self)
+    self.player_name = "PLAYER"
+    label.set_text("#label", self.player_name)
+end
+
+function on_message(self, message_id, message, sender)
+    if message_id == hash("set_player_name") then
+        local name = tostring(message.name or "PLAYER")
+        if #name > 18 then
+            name = string.sub(name, 1, 18)
+        end
+        self.player_name = name
+        label.set_text("#label", self.player_name)
+    end
+end

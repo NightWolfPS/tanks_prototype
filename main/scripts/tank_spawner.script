@@ -1,0 +1,393 @@
+-- tank_spawner.script
+-- Local tank spawning, server-authorized respawn and damage forwarding.
+-- Defold 1.13.1
+
+go.property("spawn_delay", 0.5)
+
+local FACTORY_URL = msg.url("main:/tank_spawner#tank_collection_factory")
+local CAMERA_URL = msg.url("main:/camera")
+local NETWORK_MANAGER_URL = msg.url("main:/network_manager#network_manager")
+local TANK_ROOT_ID = hash("/tank")
+local REGISTRATION_WAIT = 0.25
+
+local function reserve_spawn_point(self, preferred_index)
+    if not self.spawn_registration_complete or #self.spawn_points == 0 then
+        return nil, nil
+    end
+
+    if preferred_index
+    and preferred_index >= 1
+    and preferred_index <= #self.spawn_points
+    and not self.reserved_spawn_points[preferred_index] then
+
+        self.reserved_spawn_points[preferred_index] = true
+
+        print("[SPAWNER] Reserved server-assigned spawn point: " .. preferred_index)
+
+        return preferred_index, self.spawn_points[preferred_index]
+    end
+
+    local available = {}
+
+    for index = 1, #self.spawn_points do
+        if not self.reserved_spawn_points[index] then
+            available[#available + 1] = index
+        end
+    end
+
+    if #available == 0 then return nil, nil end
+
+    local selected_index = available[math.random(1, #available)]
+    self.reserved_spawn_points[selected_index] = true
+
+    print("[SPAWNER] Reserved spawn point: " .. selected_index)
+
+    return selected_index, self.spawn_points[selected_index]
+end
+
+local function release_spawn_point(self, index)
+    if not index then return end
+
+    if self.reserved_spawn_points[index] then
+        self.reserved_spawn_points[index] = nil
+        print("[SPAWNER] Released spawn point: " .. tostring(index))
+    end
+end
+
+local function spawn_tank(self)
+    if not self.spawn_registration_complete or not self.network_ready then
+        return false
+    end
+
+    if self.has_spawned_once and not self.respawn_authorized then
+        print("[SPAWNER] Respawn not authorized by server")
+        return false
+    end
+
+    if #self.spawn_points == 0 then
+        print("[SPAWNER] ERROR: No spawn points registered")
+        return false
+    end
+
+    -- Server index is zero-based; local spawn point index is one-based.
+    local preferred_index = nil
+
+    if self.assigned_spawn_index ~= nil then
+        preferred_index = self.assigned_spawn_index + 1
+    end
+
+    local point_index, point = reserve_spawn_point(self, preferred_index)
+
+    if not point_index or not point then
+        print("[SPAWNER] No free spawn points. Retrying later")
+        return false
+    end
+
+    if preferred_index and point_index ~= preferred_index then
+        print("[SPAWNER] WARNING: Assigned marker unavailable; using marker "
+        .. point_index)
+    end
+
+    if not point.position or not point.rotation then
+        print("[SPAWNER] ERROR: Invalid spawn point transform")
+        release_spawn_point(self, point_index)
+        return false
+    end
+
+    local ok_create, ids = pcall(function()
+        return collectionfactory.create(
+        FACTORY_URL,
+        point.position,
+        point.rotation
+    )
+end)
+
+if not ok_create or not ids then
+    print("[SPAWNER] ERROR: Tank creation failed: " .. tostring(ids))
+    release_spawn_point(self, point_index)
+    return false
+end
+
+local root_id = ids[TANK_ROOT_ID]
+
+if not root_id then
+    print("[SPAWNER] ERROR: Root '/tank' not found")
+    pprint(ids)
+    pcall(go.delete, ids)
+    release_spawn_point(self, point_index)
+    return false
+end
+
+self.tank_ids = ids
+self.tank_root = root_id
+self.current_spawn_index = point_index
+self.spawned = true
+
+self.has_spawned_once = true
+self.respawn_authorized = false
+self.respawn_requested = false
+
+msg.post(root_id, "set_player_name", {
+    name = self.network_player_id or "PLAYER"
+})
+
+local target_url = msg.url("main", root_id, nil)
+
+local ok_message, message_error = pcall(function()
+    msg.post(CAMERA_URL, "set_target", {
+        target = target_url
+    })
+end)
+
+if not ok_message then
+    print("[SPAWNER] WARNING: Camera target message failed: "
+    .. tostring(message_error))
+end
+
+print("[SPAWNER] Local tank spawned at marker " .. point_index
+.. " (network player " .. tostring(self.network_player_id) .. ")")
+
+return true
+end
+
+local function destroy_tank(self)
+if not self.tank_root then
+    print("[SPAWNER] No tank instance to destroy")
+    return false
+end
+
+pcall(function()
+    msg.post(CAMERA_URL, "clear_target")
+end)
+
+-- The server handles duplicate death/inactive reports safely.
+msg.post(NETWORK_MANAGER_URL, "network_player_inactive")
+
+local old_root = self.tank_root
+local ok_delete, delete_error = pcall(function()
+    go.delete(old_root, true)
+end)
+
+if not ok_delete then
+    print("[SPAWNER] ERROR: Destroy failed: " .. tostring(delete_error))
+    return false
+end
+
+release_spawn_point(self, self.current_spawn_index)
+
+self.tank_ids = nil
+self.tank_root = nil
+self.current_spawn_index = nil
+self.spawned = false
+
+self.timer = self.spawn_delay
+self.respawn_requested = false
+self.respawn_authorized = false
+
+print("[SPAWNER] Tank destroyed; respawn scheduled")
+
+return true
+end
+
+function init(self)
+self.spawn_points = {}
+self.reserved_spawn_points = {}
+self.spawn_registration_complete = false
+self.registration_timer = REGISTRATION_WAIT
+
+self.timer = self.spawn_delay
+self.spawned = false
+self.tank_ids = nil
+self.tank_root = nil
+self.current_spawn_index = nil
+
+self.network_ready = false
+self.network_player_id = nil
+self.assigned_spawn_index = nil
+
+self.has_spawned_once = false
+self.respawn_requested = false
+self.respawn_authorized = false
+
+math.randomseed(os.time())
+
+print("[DEBUG] Spawner script URL: " .. tostring(msg.url()))
+print("[DEBUG] Factory URL: " .. tostring(FACTORY_URL))
+print("[DEBUG] Camera URL: " .. tostring(CAMERA_URL))
+
+msg.post(".", "acquire_input_focus")
+
+print("[SPAWNER] Waiting for spawn point registration and network assignment")
+end
+
+function update(self, dt)
+if self.spawned then return end
+
+if not self.spawn_registration_complete then
+    self.registration_timer = self.registration_timer - dt
+
+    if self.registration_timer <= 0 then
+        self.spawn_registration_complete = true
+
+        print("[SPAWNER] Registration finished. Points: "
+        .. #self.spawn_points)
+
+        self.timer = self.spawn_delay
+    else
+        return
+    end
+end
+
+if not self.network_ready then return end
+
+-- After the first spawn, every new tank requires server authorization.
+if self.has_spawned_once and not self.respawn_authorized then
+    if self.respawn_requested then
+        return
+    end
+
+    self.timer = self.timer - dt
+
+    if self.timer <= 0 then
+        self.respawn_requested = true
+
+        msg.post(NETWORK_MANAGER_URL, "network_request_respawn")
+
+        print("[SPAWNER] Respawn requested from server")
+    end
+
+    return
+end
+
+self.timer = self.timer - dt
+
+if self.timer <= 0 then
+    if not spawn_tank(self) then
+        self.timer = 1
+    end
+end
+end
+
+function on_message(self, message_id, message, sender)
+if message_id == hash("register_spawn_point") then
+    if message.position and message.rotation then
+        self.spawn_points[#self.spawn_points + 1] = {
+            position = message.position,
+            rotation = message.rotation
+        }
+
+        print("[SPAWNER] Registered spawn point. Total: "
+        .. #self.spawn_points)
+    else
+        print("[SPAWNER] ERROR: Invalid spawn point message")
+    end
+
+elseif message_id == hash("request_spawn_point") then
+    -- Backwards compatibility with the legacy bot_spawner.
+    local point_index, point = reserve_spawn_point(self)
+
+    if point_index and point then
+        msg.post(sender, "spawn_point_assigned", {
+            index = point_index,
+            position = point.position,
+            rotation = point.rotation
+        })
+    else
+        msg.post(sender, "spawn_point_unavailable")
+    end
+
+elseif message_id == hash("network_player_ready") then
+    self.network_ready = true
+    self.network_player_id = message.player_id
+    self.assigned_spawn_index = tonumber(message.spawn_index)
+
+    self.timer = self.spawn_delay
+
+    print("[SPAWNER] Server assignment received. Player: "
+    .. tostring(self.network_player_id)
+    .. ", zero-based spawn index: "
+    .. tostring(self.assigned_spawn_index))
+
+elseif message_id == hash("network_disconnected") then
+    self.network_ready = false
+    self.respawn_requested = false
+
+    print("[SPAWNER] Network disconnected; waiting for server")
+
+elseif message_id == hash("network_respawn_accepted") then
+    if message.player_id ~= self.network_player_id then
+        print("[SPAWNER] Ignored respawn confirmation for another player")
+        return
+    end
+
+    self.respawn_authorized = true
+    self.respawn_requested = false
+    self.timer = 0
+
+    local index = tonumber(message.spawn_index)
+
+    if index ~= nil then
+        self.assigned_spawn_index = index
+    end
+
+    print("[SPAWNER] Server authorized respawn")
+
+elseif message_id == hash("network_respawn_rejected") then
+    self.respawn_requested = false
+    self.respawn_authorized = false
+    self.timer = 0.5
+
+    print("[SPAWNER] Respawn rejected: " .. tostring(message.reason))
+
+elseif message_id == hash("player_destroyed") then
+    if self.spawned and self.tank_root then
+        destroy_tank(self)
+    end
+
+elseif message_id == hash("network_apply_damage") then
+    if self.spawned and self.tank_root then
+        msg.post(self.tank_root, "network_apply_damage", {
+            damage = message.damage,
+            killer_id = message.killer_id,
+            hit_x = message.hit_x,
+            hit_y = message.hit_y,
+            effects = message.effects or {},
+            critical = message.critical == true,
+            effect = message.effect or "",
+            status_tick = message.status_tick == true
+        })
+    else
+        print("[SPAWNER] Ignored network damage: no active local tank")
+    end
+
+elseif message_id == hash("network_status_expired") then
+    if self.spawned and self.tank_root then
+        msg.post(self.tank_root, "network_status_expired", {
+            effect = message.effect or ""
+        })
+    end
+
+elseif message_id == hash("release_spawn_point") then
+    release_spawn_point(self, message.index)
+
+elseif message_id == hash("spawn_registration_complete") then
+    self.spawn_registration_complete = true
+    self.timer = self.spawn_delay
+
+    print("[SPAWNER] Spawn point registration complete")
+end
+end
+
+function on_input(self, action_id, action)
+if action_id == hash("kill_tank") and action.pressed then
+    if self.spawned then
+        destroy_tank(self)
+    else
+        print("[SPAWNER] No spawned tank to destroy")
+    end
+
+    return true
+end
+
+return false
+end

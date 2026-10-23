@@ -1,0 +1,72 @@
+name: "bot"
+instances {
+  id: "bot"
+  prototype: "/main/objects/bot.go"
+  children: "bot_turret"
+  component_properties {
+    id: "tank_bot"
+    properties {
+      id: "acceleration"
+      value: "80.0"
+      type: PROPERTY_TYPE_NUMBER
+    }
+    properties {
+      id: "turn_speed"
+      value: "45.0"
+      type: PROPERTY_TYPE_NUMBER
+    }
+    properties {
+      id: "detection_range"
+      value: "1500.0"
+      type: PROPERTY_TYPE_NUMBER
+    }
+    properties {
+      id: "attack_range"
+      value: "550.0"
+      type: PROPERTY_TYPE_NUMBER
+    }
+    properties {
+      id: "turret_turn_speed"
+      value: "65.0"
+      type: PROPERTY_TYPE_NUMBER
+    }
+    properties {
+      id: "fire_interval"
+      value: "4.5"
+      type: PROPERTY_TYPE_NUMBER
+    }
+    properties {
+      id: "projectile_damage"
+      value: "50.0"
+      type: PROPERTY_TYPE_NUMBER
+    }
+    properties {
+      id: "muzzle_distance"
+      value: "50.0"
+      type: PROPERTY_TYPE_NUMBER
+    }
+    properties {
+      id: "aim_spread"
+      value: "0.035"
+      type: PROPERTY_TYPE_NUMBER
+    }
+    properties {
+      id: "patrol_radius"
+      value: "750.0"
+      type: PROPERTY_TYPE_NUMBER
+    }
+    properties {
+      id: "search_radius"
+      value: "750.0"
+      type: PROPERTY_TYPE_NUMBER
+    }
+  }
+}
+instances {
+  id: "bot_turret"
+  prototype: "/main/objects/bot_turret.go"
+  position {
+    z: 0.5
+  }
+}
+scale_along_z: 0

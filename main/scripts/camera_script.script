@@ -1,0 +1,47 @@
+-- camera_script
+-- Камера плавно следует за динамически созданным танком.
+
+go.property("follow_speed", 8.0)
+
+function init(self)
+	self.target = nil
+	print("[CAMERA] Waiting for tank")
+end
+
+function update(self, dt)
+	if not self.target then
+		return
+	end
+
+	local ok, target_position = pcall(function()
+		return go.get_position(self.target)
+	end)
+
+	if not ok then
+		self.target = nil
+		print("[CAMERA] Target lost")
+		return
+	end
+
+	local camera_position = go.get_position()
+	local alpha = math.min(dt * self.follow_speed, 1.0)
+
+	camera_position.x = camera_position.x
+	+ (target_position.x - camera_position.x) * alpha
+
+	camera_position.y = camera_position.y
+	+ (target_position.y - camera_position.y) * alpha
+
+	go.set_position(camera_position)
+end
+
+function on_message(self, message_id, message, sender)
+	if message_id == hash("set_target") then
+		self.target = message.target
+		print("[CAMERA] Target assigned")
+
+	elseif message_id == hash("clear_target") then
+		self.target = nil
+		print("[CAMERA] Target cleared")
+	end
+end

@@ -1,0 +1,144 @@
+name: "main"
+instances {
+  id: "camera"
+  prototype: "/main/objects/camera.go"
+  position {
+    x: 1535.0
+    y: 798.0
+    z: 2.0
+  }
+}
+instances {
+  id: "terrain"
+  prototype: "/main/objects/terrain.go"
+}
+instances {
+  id: "tank_hud"
+  prototype: "/main/objects/tank_hud.go"
+}
+instances {
+  id: "tank_spawner"
+  prototype: "/main/objects/tank_spawner.go"
+  position {
+    x: 270.06912
+    y: 299.95584
+  }
+  component_properties {
+    id: "tank_spawner"
+    properties {
+      id: "spawn_delay"
+      value: "1.5"
+      type: PROPERTY_TYPE_NUMBER
+    }
+  }
+}
+instances {
+  id: "bot_spawner"
+  prototype: "/main/objects/bot_spawner.go"
+  component_properties {
+    id: "bot_spawner"
+    properties {
+      id: "max_bots"
+      value: "0.0"
+      type: PROPERTY_TYPE_NUMBER
+    }
+    properties {
+      id: "spawn_interval"
+      value: "1.5"
+      type: PROPERTY_TYPE_NUMBER
+    }
+    properties {
+      id: "respawn_delay"
+      value: "1.5"
+      type: PROPERTY_TYPE_NUMBER
+    }
+  }
+}
+instances {
+  id: "houses"
+  prototype: "/main/objects/houses.go"
+  position {
+    z: 0.1
+  }
+}
+scale_along_z: 0
+embedded_instances {
+  id: "spawn_point_1"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 421.0
+    y: 162.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_2"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 2620.0
+    y: 1314.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_3"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 264.0
+    y: 1408.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_4"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 2558.0
+    y: 232.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_5"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 1455.0
+    y: 1368.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_6"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 1487.0
+    y: 166.0
+  }
+}
+embedded_instances {
+  id: "network_manager"
+  data: "components {\n"
+  "  id: \"network_manager\"\n"
+  "  component: \"/main/scripts/network_manager.script\"\n"
+  "}\n"
+  ""
+}

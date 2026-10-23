@@ -1,0 +1,7 @@
+size {
+  x: 128.0
+  y: 32.0
+}
+text: "Label"
+font: "/builtins/fonts/default.font"
+material: "/builtins/fonts/label-df.material"

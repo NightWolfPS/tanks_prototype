@@ -1,0 +1,474 @@
+-- bot_spawner.script
+-- Спавн ботов, Deathmatch и статистика K/D.
+
+go.property("max_bots", 3)
+go.property("spawn_interval", 1.5)
+go.property("respawn_delay", 1.5)
+
+local FACTORY_URL =
+msg.url("main:/bot_spawner#bot_collection_factory")
+
+local TANK_SPAWNER_URL =
+msg.url("main:/tank_spawner#tank_spawner")
+
+local HUD_URL = msg.url("main:/tank_hud#gui")
+
+local REGISTRATION_WAIT = 0.5
+
+local GROUP_TANK = hash("tank")
+local GROUP_BOT = hash("bot")
+
+local BOT_NAMES = {
+	"RIVET",
+	"MAKO",
+	"VEX",
+	"PIT",
+	"BRAVO"
+}
+
+
+-- =========================================================
+-- Таблица результатов
+-- =========================================================
+
+local function publish_scoreboard(self)
+	-- Игрок занимает строку 0.
+	msg.post(HUD_URL, "scoreboard_row", {
+		row = 0,
+		name = self.player_stats.name,
+		kills = self.player_stats.kills,
+		deaths = self.player_stats.deaths
+	})
+
+	-- Три постоянных места для ботов.
+	for slot = 1, #BOT_NAMES do
+		local stats = self.bot_stats[slot]
+
+		msg.post(HUD_URL, "scoreboard_row", {
+			row = slot,
+			name = stats.name,
+			kills = stats.kills,
+			deaths = stats.deaths
+		})
+	end
+end
+
+
+local function award_kill(self, killer_id, victim_id)
+	if not killer_id or killer_id == hash("/none") then
+		return
+	end
+
+	-- Самоуничтожение не считается убийством.
+	if victim_id and killer_id == victim_id then
+		return
+	end
+
+	-- Сопоставляем ID всех появлений игрока с его статистикой.
+	if self.player_ids[killer_id] then
+		self.player_stats.kills =
+		self.player_stats.kills + 1
+
+		print("[SCORE] YOU scored a kill")
+		return
+	end
+
+	-- Используем историю ID, чтобы засчитывать убийства
+	-- даже в том случае, если стрелявший уже погиб.
+	local slot = self.bot_history[killer_id]
+
+	if slot and self.bot_stats[slot] then
+		self.bot_stats[slot].kills =
+		self.bot_stats[slot].kills + 1
+
+		print(
+		"[SCORE] "
+		.. self.bot_stats[slot].name
+		.. " scored a kill"
+	)
+end
+end
+
+
+local function get_free_bot_slot(self)
+for slot = 1, #BOT_NAMES do
+	if not self.slot_ids[slot] then
+		return slot
+	end
+end
+
+return nil
+end
+
+
+-- =========================================================
+-- Создание бота
+-- =========================================================
+
+local function spawn_bot(self, point_index, position, rotation)
+if not point_index or not position or not rotation then
+	print("[BOT SPAWNER] ERROR: Invalid spawn assignment")
+	return false
+end
+
+local slot = get_free_bot_slot(self)
+
+if not slot then
+	print("[BOT SPAWNER] ERROR: No free bot slot")
+	return false
+end
+
+-- Передаём боту номер точки и постоянный слот статистики.
+local properties = {}
+
+properties[hash("/bot")] = {
+	spawn_index = point_index,
+	bot_slot = slot
+}
+
+local ok, ids = pcall(function()
+	return collectionfactory.create(
+	FACTORY_URL,
+	position,
+	rotation,
+	properties
+)
+end)
+
+if not ok or not ids then
+print(
+"[BOT SPAWNER] ERROR: Creation failed: "
+.. tostring(ids)
+)
+return false
+end
+
+local root_id = ids[hash("/bot")]
+
+if not root_id then
+print("[BOT SPAWNER] ERROR: Root '/bot' not found")
+pprint(ids)
+go.delete(ids)
+return false
+end
+
+self.bot_ids[root_id] = slot
+self.bot_history[root_id] = slot
+self.slot_ids[slot] = root_id
+
+self.active_bots = self.active_bots + 1
+
+print(
+"[BOT SPAWNER] "
+.. self.bot_stats[slot].name
+.. " spawned at point "
+.. point_index
+)
+
+print(
+"[BOT SPAWNER] Active bots: "
+.. self.active_bots .. "/" .. self.max_bots
+)
+
+publish_scoreboard(self)
+
+return true
+end
+
+
+-- =========================================================
+-- Выдача списка целей
+-- =========================================================
+
+local function send_combat_targets(self, sender, requester_id)
+if self.player_id and self.player_id ~= requester_id then
+msg.post(sender, "combat_target", {
+target_id = self.player_id,
+target_group = GROUP_TANK
+})
+end
+
+for bot_id, slot in pairs(self.bot_ids) do
+if bot_id ~= requester_id then
+msg.post(sender, "combat_target", {
+target_id = bot_id,
+target_group = GROUP_BOT
+})
+end
+end
+
+msg.post(sender, "combat_targets_done")
+end
+
+
+-- =========================================================
+-- Инициализация
+-- =========================================================
+
+function init(self)
+self.spawn_points = {}
+
+-- ID живых ботов -> слот.
+self.bot_ids = {}
+
+-- История ID ботов, включая уже погибших.
+self.bot_history = {}
+
+-- Слот -> текущий ID бота.
+self.slot_ids = {}
+
+-- Все ID игрока, включая предыдущие появления.
+self.player_ids = {}
+self.player_deaths_recorded = {}
+
+self.active_bots = 0
+self.player_id = nil
+
+self.player_stats = {
+name = "YOU",
+kills = 0,
+deaths = 0
+}
+
+self.bot_stats = {}
+
+for slot, name in ipairs(BOT_NAMES) do
+self.bot_stats[slot] = {
+name = name,
+kills = 0,
+deaths = 0
+}
+end
+
+self.registration_timer = REGISTRATION_WAIT
+self.registration_finished = false
+
+self.spawn_timer = 0
+self.awaiting_spawn_point = false
+
+print("[BOT SPAWNER] Waiting for spawn points")
+
+publish_scoreboard(self)
+end
+
+
+-- =========================================================
+-- Обновление спавна
+-- =========================================================
+
+function update(self, dt)
+if not self.registration_finished then
+self.registration_timer =
+self.registration_timer - dt
+
+if self.registration_timer <= 0 then
+self.registration_finished = true
+
+print(
+"[BOT SPAWNER] Registration finished. Points: "
+.. #self.spawn_points
+)
+
+self.spawn_timer = 0
+else
+return
+end
+end
+
+if self.active_bots >= self.max_bots then
+return
+end
+
+if self.awaiting_spawn_point then
+return
+end
+
+self.spawn_timer = self.spawn_timer - dt
+
+if self.spawn_timer <= 0 then
+self.awaiting_spawn_point = true
+
+msg.post(
+TANK_SPAWNER_URL,
+"request_spawn_point"
+)
+end
+end
+
+
+-- =========================================================
+-- Обработка сообщений
+-- =========================================================
+
+function on_message(self, message_id, message, sender)
+
+if message_id == hash("register_spawn_point") then
+table.insert(self.spawn_points, {
+position = message.position,
+rotation = message.rotation
+})
+
+print(
+"[BOT SPAWNER] Registered spawn point. Total: "
+.. #self.spawn_points
+)
+
+
+elseif message_id == hash("spawn_point_assigned") then
+self.awaiting_spawn_point = false
+
+if self.active_bots >= self.max_bots then
+msg.post(TANK_SPAWNER_URL, "release_spawn_point", {
+index = message.index
+})
+return
+end
+
+local success = spawn_bot(
+self,
+message.index,
+message.position,
+message.rotation
+)
+
+if success then
+self.spawn_timer = self.spawn_interval
+else
+msg.post(TANK_SPAWNER_URL, "release_spawn_point", {
+index = message.index
+})
+
+self.spawn_timer = 1
+end
+
+
+elseif message_id == hash("spawn_point_unavailable") then
+self.awaiting_spawn_point = false
+self.spawn_timer = 0.5
+
+
+-- Регистрация игрока или его нового экземпляра после респавна.
+elseif message_id == hash("register_player") then
+self.player_id = message.player_id
+
+if self.player_id then
+self.player_ids[self.player_id] = true
+end
+
+print(
+"[BOT SPAWNER] Player registered: "
+.. tostring(self.player_id)
+)
+
+publish_scoreboard(self)
+
+
+-- Игрок погиб.
+elseif message_id == hash("player_died") then
+local victim_id = message.player_id
+
+-- Считаем смерть только один раз для данного экземпляра.
+if victim_id
+and not self.player_deaths_recorded[victim_id] then
+
+self.player_deaths_recorded[victim_id] = true
+self.player_stats.deaths =
+self.player_stats.deaths + 1
+
+award_kill(
+self,
+message.killer_id,
+victim_id
+)
+
+publish_scoreboard(self)
+
+print(
+"[SCORE] YOU K/D: "
+.. self.player_stats.kills
+.. "/"
+.. self.player_stats.deaths
+)
+end
+
+
+-- Бот уничтожен.
+elseif message_id == hash("bot_destroyed") then
+local bot_id = message.bot_id
+local slot = message.bot_slot
+
+if not slot and bot_id then
+slot = self.bot_ids[bot_id]
+or self.bot_history[bot_id]
+end
+
+local was_active =
+bot_id and self.bot_ids[bot_id] ~= nil
+
+if was_active then
+-- Начисляем убийство до удаления ID жертвы.
+award_kill(
+self,
+message.killer_id,
+bot_id
+)
+
+local stats = self.bot_stats[slot]
+
+if stats then
+stats.deaths = stats.deaths + 1
+end
+
+self.bot_ids[bot_id] = nil
+
+self.active_bots = math.max(
+0,
+self.active_bots - 1
+)
+
+if self.slot_ids[slot] == bot_id then
+self.slot_ids[slot] = nil
+end
+
+if message.spawn_index then
+msg.post(
+TANK_SPAWNER_URL,
+"release_spawn_point",
+{
+index = message.spawn_index
+}
+)
+end
+
+print(
+"[BOT SPAWNER] Bot destroyed. Active bots: "
+.. self.active_bots
+)
+
+publish_scoreboard(self)
+end
+
+self.spawn_timer = self.respawn_delay
+
+
+-- Совместимость со старым интерфейсом поиска игрока.
+elseif message_id == hash("get_player_target") then
+if self.player_id then
+msg.post(sender, "set_player_target", {
+player_id = self.player_id
+})
+end
+
+
+-- Запрос списка живых противников для Deathmatch AI.
+elseif message_id == hash("get_combat_targets") then
+send_combat_targets(
+self,
+sender,
+message.bot_id
+)
+elseif message_id == hash("request_scoreboard") then
+publish_scoreboard(self)
+end
+
+end

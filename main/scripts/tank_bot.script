@@ -1,0 +1,1048 @@
+-- tank_bot.script
+-- Deathmatch AI:
+-- поиск игрока и других ботов, преследование, стрельба.
+
+go.property("max_hp", 100)
+go.property("spawn_index", 0)
+go.property("bot_slot", 0)
+
+-- Движение.
+go.property("move_speed", 80)
+go.property("acceleration", 100)
+go.property("brake_rate", 160)
+go.property("turn_speed", 75)
+
+-- Обнаружение.
+go.property("detection_range", 650)
+go.property("attack_range", 350)
+
+-- Башня.
+go.property("turret_turn_speed", 60)
+local TURRET_PATH = "bot_turret"
+
+-- Бой.
+go.property("fire_interval", 1.25)
+go.property("projectile_damage", 10)
+go.property("muzzle_distance", 24)
+go.property("aim_spread", 0.035)
+
+-- Патруль и поиск.
+go.property("patrol_radius", 130)
+go.property("search_radius", 65)
+go.property("search_duration", 5.0)
+go.property("target_request_interval", 0.75)
+
+-- Препятствия.
+go.property("obstacle_probe", 42)
+go.property("collision_probe_width", 20)
+
+
+local BOT_SPAWNER_URL =
+msg.url("main:/bot_spawner#bot_spawner")
+
+local GROUP_WORLD = hash("world")
+local GROUP_TANK = hash("tank")
+local GROUP_BOT = hash("bot")
+
+local STATE_PATROL = "PATROL"
+local STATE_CHASE = "CHASE"
+local STATE_ATTACK = "ATTACK"
+local STATE_SEARCH = "SEARCH"
+
+local FORWARD = vmath.vector3(0, 1, 0)
+
+
+-- =========================================================
+-- Математика и состояние
+-- =========================================================
+
+local function wrap_angle(angle)
+	while angle > math.pi do
+		angle = angle - math.pi * 2
+	end
+
+	while angle < -math.pi do
+		angle = angle + math.pi * 2
+	end
+
+	return angle
+end
+
+
+local function direction_to_angle(direction)
+	return math.atan2(-direction.x, direction.y)
+end
+
+
+local function normalize_2d(direction)
+	local length = math.sqrt(
+	direction.x * direction.x +
+	direction.y * direction.y
+)
+
+if length < 0.001 then
+	return nil, length
+end
+
+return vmath.vector3(
+direction.x / length,
+direction.y / length,
+0
+), length
+end
+
+
+local function rotate_vector(angle)
+return vmath.rotate(
+vmath.quat_rotation_z(angle),
+FORWARD
+)
+end
+
+
+local function approach(current, target, amount)
+if current < target then
+return math.min(current + amount, target)
+end
+
+return math.max(current - amount, target)
+end
+
+
+local function set_state(self, new_state)
+if self.state == new_state then
+return
+end
+
+self.state = new_state
+print("[BOT] State: " .. new_state)
+end
+
+
+local function random_point(center, radius)
+local angle = math.random() * math.pi * 2
+local distance = math.sqrt(math.random()) * radius
+
+return center + vmath.vector3(
+math.cos(angle) * distance,
+math.sin(angle) * distance,
+0
+)
+end
+
+
+local function get_first_hit(result)
+if type(result) == "table"
+and result.id == nil
+and result[1] ~= nil then
+return result[1]
+end
+
+return result
+end
+
+
+-- =========================================================
+-- Поворот корпуса
+-- =========================================================
+
+local function rotate_towards(self, target_angle, dt)
+target_angle = wrap_angle(target_angle)
+
+local difference = wrap_angle(
+target_angle - self.angle
+)
+
+local max_step = math.rad(self.turn_speed) * dt
+
+if math.abs(difference) <= max_step then
+self.angle = target_angle
+elseif difference > 0 then
+self.angle = self.angle + max_step
+else
+self.angle = self.angle - max_step
+end
+
+self.angle = wrap_angle(self.angle)
+
+go.set_rotation(
+vmath.quat_rotation_z(self.angle)
+)
+
+return math.abs(
+wrap_angle(target_angle - self.angle)
+)
+end
+
+
+-- =========================================================
+-- Обход препятствий
+-- =========================================================
+
+local function path_is_clear(
+self,
+position,
+direction,
+distance
+)
+local side = vmath.vector3(
+-direction.y,
+direction.x,
+0
+)
+
+local offsets = {
+-self.collision_probe_width,
+0,
+self.collision_probe_width
+}
+
+for _, lateral in ipairs(offsets) do
+local from = position + side * lateral
+local to = from + direction * distance
+
+local result = physics.raycast(
+from,
+to,
+{ GROUP_WORLD }
+)
+
+if get_first_hit(result) then
+return false
+end
+end
+
+return true
+end
+
+
+local function find_safe_heading(
+self,
+position,
+desired_direction,
+distance
+)
+local base_angle = direction_to_angle(
+desired_direction
+)
+
+local sign = self.avoid_sign
+
+local offsets = {
+0,
+sign * 25,
+-sign * 25,
+sign * 50,
+-sign * 50,
+sign * 75,
+-sign * 75,
+sign * 110,
+-sign * 110,
+180
+}
+
+local probe_distance = math.min(
+math.max(self.obstacle_probe, 12),
+math.max(distance, 12)
+)
+
+for _, offset_degrees in ipairs(offsets) do
+local candidate_angle = wrap_angle(
+base_angle + math.rad(offset_degrees)
+)
+
+local direction = rotate_vector(candidate_angle)
+
+if path_is_clear(
+self,
+position,
+direction,
+probe_distance
+) then
+if offset_degrees ~= 0 then
+self.avoid_sign =
+offset_degrees > 0 and 1 or -1
+end
+
+return candidate_angle, true
+end
+end
+
+return nil, false
+end
+
+
+local function move_towards(self, destination, dt)
+local position = go.get_position()
+
+local direction, distance = normalize_2d(
+destination - position
+)
+
+if not direction or distance <= 16 then
+self.current_speed = approach(
+self.current_speed,
+0,
+self.brake_rate * dt
+)
+
+return true
+end
+
+local target_angle, found = find_safe_heading(
+self,
+position,
+direction,
+distance
+)
+
+if not found then
+self.current_speed = approach(
+self.current_speed,
+0,
+self.brake_rate * dt
+)
+
+return false
+end
+
+rotate_towards(self, target_angle, dt)
+
+local forward = rotate_vector(self.angle)
+
+local probe_distance = math.max(
+self.obstacle_probe,
+self.current_speed * dt + 8
+)
+
+local clear = path_is_clear(
+self,
+position,
+forward,
+probe_distance
+)
+
+local angle_error = math.abs(
+wrap_angle(target_angle - self.angle)
+)
+
+local desired_speed = 0
+
+if clear then
+desired_speed = self.move_speed *
+math.max(0, math.cos(angle_error))
+end
+
+local remaining_distance = math.max(
+distance - 16,
+0
+)
+
+local braking_speed = math.sqrt(
+2 * self.brake_rate * remaining_distance
+)
+
+desired_speed = math.min(
+desired_speed,
+braking_speed
+)
+
+if desired_speed > self.current_speed then
+self.current_speed = approach(
+self.current_speed,
+desired_speed,
+self.acceleration * dt
+)
+else
+self.current_speed = approach(
+self.current_speed,
+desired_speed,
+self.brake_rate * dt
+)
+end
+
+self.current_speed = math.max(
+0,
+math.min(self.current_speed, self.move_speed)
+)
+
+local step_distance = math.min(
+self.current_speed * dt,
+remaining_distance
+)
+
+if step_distance > 0 then
+go.set_position(
+position + forward * step_distance
+)
+end
+
+return false
+end
+
+
+local function brake_to_stop(self, dt)
+local previous_speed = self.current_speed
+
+self.current_speed = approach(
+self.current_speed,
+0,
+self.brake_rate * dt
+)
+
+-- Сохраняем небольшое инерционное движение при торможении.
+local distance =
+(previous_speed + self.current_speed) * 0.5 * dt
+
+if distance > 0.001 then
+go.set_position(
+go.get_position()
++ rotate_vector(self.angle) * distance
+)
+end
+end
+
+
+-- =========================================================
+-- Проверка видимости и получение позиции цели
+-- =========================================================
+
+local function get_target_position(target_id)
+local ok, position = pcall(function()
+go.update_world_transform(target_id)
+return go.get_world_position(target_id)
+end)
+
+if not ok or not position then
+return nil
+end
+
+return position
+end
+
+
+local function can_see_target(
+self,
+target_id,
+own_position,
+target_position
+)
+local result = physics.raycast(
+own_position,
+target_position,
+{
+GROUP_WORLD,
+GROUP_TANK,
+GROUP_BOT
+}
+)
+
+result = get_first_hit(result)
+
+if not result then
+return true
+end
+
+return result.id == target_id
+end
+
+
+local function assess_candidate(self, candidate, own_position)
+if not candidate.id or candidate.id == self.bot_id then
+return nil
+end
+
+local position = get_target_position(candidate.id)
+
+if not position then
+return nil
+end
+
+local direction, distance = normalize_2d(
+position - own_position
+)
+
+if not direction or distance > self.detection_range then
+return nil
+end
+
+if not can_see_target(
+self,
+candidate.id,
+own_position,
+position
+) then
+return nil
+end
+
+return {
+id = candidate.id,
+group = candidate.group,
+position = position,
+distance = distance
+}
+end
+
+
+-- Сначала сохраняем текущую цель, если она ещё видна.
+-- Иначе выбираем ближайшую доступную цель.
+local function find_best_visible_target(self, own_position)
+if self.target_id then
+for _, candidate in ipairs(self.target_candidates) do
+if candidate.id == self.target_id then
+local current = assess_candidate(
+self,
+candidate,
+own_position
+)
+
+if current then
+return current
+end
+
+break
+end
+end
+end
+
+local best = nil
+
+for _, candidate in ipairs(self.target_candidates) do
+local assessed = assess_candidate(
+self,
+candidate,
+own_position
+)
+
+if assessed then
+if not best or assessed.distance < best.distance then
+best = assessed
+end
+end
+end
+
+return best
+end
+
+
+-- =========================================================
+-- Наведение башни
+-- =========================================================
+
+local function aim_turret_at(self, target_position, dt)
+if not self.turret_id then
+return math.huge
+end
+
+go.update_world_transform(self.turret_id)
+
+local ok, turret_position = pcall(function()
+return go.get_world_position(self.turret_id)
+end)
+
+if not ok or not turret_position then
+return math.huge
+end
+
+local direction = normalize_2d(
+target_position - turret_position
+)
+
+if not direction then
+return 0
+end
+
+local target_world_angle =
+direction_to_angle(direction)
+
+local hull_rotation = go.get_world_rotation()
+
+local hull_forward = vmath.rotate(
+hull_rotation,
+FORWARD
+)
+
+local hull_world_angle =
+direction_to_angle(hull_forward)
+
+local target_local_angle = wrap_angle(
+target_world_angle - hull_world_angle
+)
+
+local difference = wrap_angle(
+target_local_angle - self.turret_angle
+)
+
+local max_step =
+math.rad(self.turret_turn_speed) * dt
+
+if math.abs(difference) <= max_step then
+self.turret_angle = target_local_angle
+elseif difference > 0 then
+self.turret_angle =
+self.turret_angle + max_step
+else
+self.turret_angle =
+self.turret_angle - max_step
+end
+
+self.turret_angle = wrap_angle(self.turret_angle)
+
+go.set_rotation(
+vmath.quat_rotation_z(self.turret_angle),
+self.turret_id
+)
+
+go.update_world_transform(self.turret_id)
+
+return math.abs(
+wrap_angle(
+target_local_angle - self.turret_angle
+)
+)
+end
+
+
+-- =========================================================
+-- Стрельба
+-- =========================================================
+
+local function shoot(self)
+self.fire_cooldown = self.fire_interval
+
+if not self.turret_id then
+return
+end
+
+local ok, projectile_id = pcall(function()
+go.update_world_transform(self.turret_id)
+
+local turret_position =
+go.get_world_position(self.turret_id)
+
+local turret_rotation =
+go.get_world_rotation(self.turret_id)
+
+local forward = vmath.rotate(
+turret_rotation,
+FORWARD
+)
+
+local muzzle_position =
+turret_position + forward * self.muzzle_distance
+
+local shot_angle =
+direction_to_angle(forward)
++ (math.random() * 2 - 1) * self.aim_spread
+
+return factory.create(
+"#projectile_factory",
+muzzle_position,
+vmath.quat_rotation_z(shot_angle),
+{
+damage = self.projectile_damage,
+owner_group = GROUP_BOT,
+owner_id = self.bot_id
+}
+)
+end)
+
+if not ok or not projectile_id then
+print(
+"[BOT] Projectile factory error: "
+.. tostring(projectile_id)
+)
+return
+end
+
+print(
+"[BOT] Fired at target. Damage: "
+.. tostring(self.projectile_damage)
+)
+end
+
+
+-- =========================================================
+-- Здоровье и уничтожение
+-- =========================================================
+
+local function destroy_bot(self, killer_id)
+	if self.dead then
+		return
+	end
+
+	self.dead = true
+
+	print("[BOT] Destroyed")
+
+	msg.post(BOT_SPAWNER_URL, "bot_destroyed", {
+		bot_id = self.bot_id,
+		bot_slot = self.bot_slot,
+		spawn_index = self.spawn_index,
+		killer_id = killer_id
+	})
+
+	go.delete(".", true)
+end
+
+
+-- =========================================================
+-- Инициализация
+-- =========================================================
+
+function init(self)
+	self.bot_id = go.get_id()
+	
+
+self.hp = self.max_hp
+self.dead = false
+
+self.target_id = nil
+self.target_group = nil
+
+self.target_candidates = {}
+self.pending_targets = {}
+self.target_scan_pending = false
+self.target_request_timer = 0
+
+self.fire_cooldown =
+0.5 + math.random() * 0.5
+
+self.current_speed = 0
+self.correction = vmath.vector3(0, 0, 0)
+self.avoid_sign = 1
+
+self.home_position = go.get_position()
+
+self.patrol_goal = random_point(
+self.home_position,
+self.patrol_radius
+)
+
+self.last_seen_position = nil
+self.search_goal = nil
+self.search_timer = 0
+
+self.state = STATE_PATROL
+
+local forward = vmath.rotate(
+go.get_rotation(),
+FORWARD
+)
+
+self.angle = direction_to_angle(forward)
+
+self.turret_id = nil
+self.turret_angle = 0
+
+local turret_ok, turret_id = pcall(function()
+return go.get_id(TURRET_PATH)
+end)
+
+if turret_ok then
+local rotation_ok, turret_rotation =
+pcall(function()
+return go.get_rotation(turret_id)
+end)
+
+if rotation_ok then
+self.turret_id = turret_id
+
+local _, _, angle_degrees =
+vmath.quat_to_euler(turret_rotation)
+
+self.turret_angle =
+wrap_angle(math.rad(angle_degrees))
+
+print(
+"[BOT] Turret found: "
+.. tostring(self.turret_id)
+)
+end
+end
+
+if not self.turret_id then
+print("[BOT] ERROR: Turret not found")
+end
+
+print(
+"[BOT] Initialized. HP: "
+.. self.hp .. "/" .. self.max_hp
+)
+
+print("[BOT] AI initialized")
+end
+
+
+-- =========================================================
+-- Обновление ИИ
+-- =========================================================
+
+function update(self, dt)
+if self.dead then
+return
+end
+
+self.correction = vmath.vector3(0, 0, 0)
+
+self.fire_cooldown =
+self.fire_cooldown - dt
+
+self.target_request_timer =
+self.target_request_timer - dt
+
+-- Запрашиваем перечень живых противников.
+if self.target_request_timer <= 0
+and not self.target_scan_pending then
+
+self.pending_targets = {}
+self.target_scan_pending = true
+
+msg.post(
+BOT_SPAWNER_URL,
+"get_combat_targets",
+{
+bot_id = self.bot_id
+}
+)
+
+self.target_request_timer =
+self.target_request_interval
+end
+
+local own_position = go.get_world_position()
+
+local target = find_best_visible_target(
+self,
+own_position
+)
+
+-- -----------------------------------------------------
+-- Есть видимый противник.
+-- -----------------------------------------------------
+
+if target then
+self.target_id = target.id
+self.target_group = target.group
+
+self.last_seen_position = target.position
+self.search_timer = self.search_duration
+self.search_goal = nil
+
+if target.distance > self.attack_range then
+set_state(self, STATE_CHASE)
+
+move_towards(
+self,
+target.position,
+dt
+)
+else
+set_state(self, STATE_ATTACK)
+
+brake_to_stop(self, dt)
+end
+
+local aim_error = aim_turret_at(
+self,
+target.position,
+dt
+)
+
+if target.distance <= self.attack_range
+and self.fire_cooldown <= 0
+and aim_error <= math.rad(8) then
+
+shoot(self)
+end
+
+return
+end
+
+-- Цель больше не видна. Следующий поиск целей
+-- может обнаружить другого противника.
+self.target_id = nil
+self.target_group = nil
+
+-- -----------------------------------------------------
+-- Поиск в последнем известном месте.
+-- -----------------------------------------------------
+
+if self.last_seen_position and self.search_timer > 0 then
+self.search_timer = self.search_timer - dt
+
+if self.search_timer > 0 then
+set_state(self, STATE_SEARCH)
+
+if not self.search_goal then
+self.search_goal = random_point(
+self.last_seen_position,
+self.search_radius
+)
+end
+
+local position = go.get_position()
+
+local _, distance = normalize_2d(
+self.search_goal - position
+)
+
+if distance <= 18 then
+self.search_goal = random_point(
+self.last_seen_position,
+self.search_radius
+)
+end
+
+move_towards(
+self,
+self.search_goal,
+dt
+)
+
+aim_turret_at(
+self,
+self.last_seen_position,
+dt
+)
+
+return
+end
+
+self.last_seen_position = nil
+self.search_goal = nil
+
+self.patrol_goal = random_point(
+self.home_position,
+self.patrol_radius
+)
+end
+
+-- -----------------------------------------------------
+-- Патруль.
+-- -----------------------------------------------------
+
+set_state(self, STATE_PATROL)
+
+local position = go.get_position()
+
+local _, patrol_distance = normalize_2d(
+self.patrol_goal - position
+)
+
+if patrol_distance <= 18 then
+self.patrol_goal = random_point(
+self.home_position,
+self.patrol_radius
+)
+end
+
+move_towards(
+self,
+self.patrol_goal,
+dt
+)
+end
+
+
+-- =========================================================
+-- Столкновения и входящие сообщения
+-- =========================================================
+
+local function resolve_contact(self, message)
+if not message.normal or message.distance <= 0 then
+return
+end
+
+local penetration =
+message.normal * message.distance
+
+local projection = vmath.project(
+self.correction,
+penetration
+)
+
+if projection < 1 then
+local compensation =
+penetration * (1 - projection)
+
+go.set_position(
+go.get_position() + compensation
+)
+
+self.correction =
+self.correction + compensation
+end
+
+if message.other_group == GROUP_WORLD then
+local forward = rotate_vector(self.angle)
+
+if vmath.dot(forward, message.normal) < -0.15 then
+self.current_speed = 0
+end
+end
+end
+
+
+function on_message(self, message_id, message, sender)
+if self.dead then
+return
+end
+
+if message_id == hash("take_damage") then
+local damage = tonumber(message.damage) or 0
+
+if damage <= 0 then
+return
+end
+
+self.hp = math.max(0, self.hp - damage)
+
+print("[BOT] Took " .. damage .. " damage")
+
+print(
+"[BOT] HP: "
+.. self.hp .. "/" .. self.max_hp
+)
+
+if self.hp <= 0 then
+	destroy_bot(self, message.killer_id)
+end
+
+elseif message_id == hash("get_hp") then
+msg.post(sender, "hp_response", {
+hp = self.hp,
+max_hp = self.max_hp,
+dead = self.dead
+})
+
+elseif message_id == hash("combat_target") then
+if message.target_id
+and message.target_id ~= self.bot_id then
+
+table.insert(self.pending_targets, {
+id = message.target_id,
+group = message.target_group
+})
+end
+
+elseif message_id == hash("combat_targets_done") then
+self.target_candidates = self.pending_targets
+self.pending_targets = {}
+self.target_scan_pending = false
+
+elseif message_id == hash("set_player_target") then
+-- Совместимость со старым сообщением спавнера.
+if message.player_id
+and message.player_id ~= self.bot_id then
+
+table.insert(self.target_candidates, {
+id = message.player_id,
+group = GROUP_TANK
+})
+end
+
+elseif message_id == hash("contact_point_response") then
+resolve_contact(self, message)
+end
+end
