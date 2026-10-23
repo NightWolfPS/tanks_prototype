@@ -1,0 +1,153 @@
+-- turret_controller.script
+-- Local turret aiming/firing; remote turret rotation and projectile visuals are
+-- replicated by network_manager.script.
+-- Defold 1.13.1
+
+go.property("turret_turn_speed", 120)
+go.property("fire_cooldown", 0.5)
+go.property("muzzle_distance", 50)
+go.property("is_local_player", true)
+
+local NETWORK_URL = msg.url("main:/network_manager#network_manager")
+local RELOAD_HUD_URL = msg.url("main:/tank_hud#gui")
+local REMOTE_INTERPOLATION_SPEED = 16
+
+local function clamp(value, min_value, max_value)
+    return math.max(min_value, math.min(max_value, value))
+end
+
+local function angle_difference(from_angle, to_angle)
+    return (to_angle - from_angle + math.pi) % (2 * math.pi) - math.pi
+end
+
+local function send_reload_progress(self)
+    if not self.is_local_player then return end
+
+    local progress = 1
+    if self.fire_cooldown > 0 then
+        progress = 1 - self.fire_timer / self.fire_cooldown
+    end
+
+    progress = clamp(progress, 0, 1)
+    msg.post(RELOAD_HUD_URL, "reload_progress", { progress = progress })
+end
+
+local function fire(self)
+    local rotation = go.get_world_rotation()
+    local position = go.get_world_position()
+    local direction = vmath.rotate(rotation, vmath.vector3(0, 1, 0))
+    local spawn_position = position + direction * self.muzzle_distance
+
+    print("[TURRET] Fire requested")
+
+    local ok_flash, flash_id = pcall(function()
+        return factory.create("#muzzle_flash_factory", spawn_position, rotation)
+    end)
+    if ok_flash and flash_id then
+        msg.post(flash_id, "play_effect")
+    else
+        print("[TURRET] MUZZLE FACTORY ERROR: " .. tostring(flash_id))
+    end
+
+    -- Keep the local projectile as the only damage-reporting projectile.
+    local owner_id = go.get_parent() or go.get_id()
+    local ok_projectile, projectile_id = pcall(function()
+        return factory.create("#projectile_factory", spawn_position, rotation, {
+            damage = 25,
+            owner_group = hash("tank"),
+            owner_id = owner_id,
+            is_visual_only = false,
+        })
+    end)
+
+    if not ok_projectile or not projectile_id then
+        print("[TURRET] PROJECTILE FACTORY ERROR: " .. tostring(projectile_id))
+        return
+    end
+
+    local _, _, angle_degrees = vmath.quat_to_euler(rotation)
+    self.shot_counter = self.shot_counter + 1
+    msg.post(NETWORK_URL, "network_send_shot", {
+        x = spawn_position.x,
+        y = spawn_position.y,
+        z = spawn_position.z,
+        angle = math.rad(angle_degrees),
+        shot_id = tostring(go.get_id()) .. "_" .. tostring(self.shot_counter),
+    })
+end
+
+function init(self)
+    self.turret_left = false
+    self.turret_right = false
+    self.fire_pressed = false
+    self.fire_timer = 0
+    self.shot_counter = 0
+    self.remote_target_angle = nil
+
+    local _, _, angle_degrees = vmath.quat_to_euler(go.get_rotation())
+    self.turret_angle = math.rad(angle_degrees)
+
+    if self.is_local_player then
+        msg.post(".", "acquire_input_focus")
+        send_reload_progress(self)
+    else
+        print("[NETWORK] Remote turret initialized: " .. tostring(go.get_id()))
+    end
+end
+
+function on_input(self, action_id, action)
+    if not self.is_local_player then return false end
+
+    if action_id == hash("z") then
+        if action.pressed then self.turret_left = true
+        elseif action.released then self.turret_left = false end
+        return true
+    elseif action_id == hash("x") then
+        if action.pressed then self.turret_right = true
+        elseif action.released then self.turret_right = false end
+        return true
+    elseif action_id == hash("space") then
+        if action.pressed then self.fire_pressed = true
+        elseif action.released then self.fire_pressed = false end
+        return true
+    end
+
+    return false
+end
+
+function update(self, dt)
+    if not self.is_local_player then
+        if self.remote_target_angle ~= nil then
+            local alpha = clamp(dt * REMOTE_INTERPOLATION_SPEED, 0, 1)
+            self.turret_angle = self.turret_angle
+                + angle_difference(self.turret_angle, self.remote_target_angle) * alpha
+            go.set_rotation(vmath.quat_rotation_z(self.turret_angle))
+        end
+        return
+    end
+
+    if self.turret_left then
+        self.turret_angle = self.turret_angle + math.rad(self.turret_turn_speed) * dt
+    end
+    if self.turret_right then
+        self.turret_angle = self.turret_angle - math.rad(self.turret_turn_speed) * dt
+    end
+
+    go.set_rotation(vmath.quat_rotation_z(self.turret_angle))
+
+    if self.fire_timer > 0 then
+        self.fire_timer = math.max(0, self.fire_timer - dt)
+    end
+    if self.fire_pressed and self.fire_timer <= 0 then
+        fire(self)
+        self.fire_timer = self.fire_cooldown
+    end
+
+    send_reload_progress(self)
+end
+
+function on_message(self, message_id, message, sender)
+    if message_id == hash("network_remote_turret_state") and not self.is_local_player then
+        self.remote_target_angle = tonumber(message.angle) or self.turret_angle
+    end
+end

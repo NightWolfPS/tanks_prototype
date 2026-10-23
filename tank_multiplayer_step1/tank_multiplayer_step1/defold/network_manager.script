@@ -1,0 +1,515 @@
+-- network_manager.script
+-- Multiplayer milestone 3: remote tank motion, remote projectile visuals,
+-- client-reported PvP hits relayed by the WebSocket server.
+-- Defold 1.13.1 + extension-websocket
+
+local SERVER_URL = "ws://127.0.0.1:8080"
+local STATE_SEND_INTERVAL = 0.05 -- 20 state updates per second
+
+local TANK_FACTORY_URL = msg.url("main:/tank_spawner#tank_collection_factory")
+local TANK_SPAWNER_URL = msg.url("main:/tank_spawner#tank_spawner")
+local HUD_URL = msg.url("main:/tank_hud#gui")
+
+local GROUP_TANK = hash("tank")
+local NONE_ID = hash("/none")
+
+local function log(message)
+    print("[NETWORK] " .. tostring(message))
+end
+
+local function is_number(value)
+    return type(value) == "number" and value == value
+        and value ~= math.huge and value ~= -math.huge
+end
+
+local function send_json(self, payload)
+    if not self.connected or self.connection == nil then
+        return false
+    end
+
+    local ok, encoded = pcall(json.encode, payload)
+    if not ok then
+        log("JSON encode failed: " .. tostring(encoded))
+        return false
+    end
+
+    local send_ok, send_error = pcall(function()
+        websocket.send(self.connection, encoded, {
+            type = websocket.DATA_TYPE_TEXT
+        })
+    end)
+
+    if not send_ok then
+        log("WebSocket send failed: " .. tostring(send_error))
+        return false
+    end
+
+    return true
+end
+
+local function post_remote_state(self, player_id, player)
+    local instance = self.remote_instances[player_id]
+    if not instance or not player or not is_number(player.x) or not is_number(player.y) then
+        return
+    end
+
+    msg.post(instance.root_id, "network_remote_state", {
+        x = player.x,
+        y = player.y,
+        body_angle = player.body_angle or 0,
+        turret_angle = player.turret_angle or 0,
+        state_seq = player.state_seq or 0,
+    })
+end
+
+local create_remote_shot
+
+local function flush_pending_shots(self, player_id)
+    local pending = self.pending_shots[player_id]
+    if not pending or #pending == 0 then
+        return
+    end
+
+    self.pending_shots[player_id] = nil
+    for _, shot in ipairs(pending) do
+        create_remote_shot(self, player_id, shot)
+    end
+end
+
+local function create_remote_tank(self, player)
+    if not player or type(player.id) ~= "string" then
+        return
+    end
+
+    if player.id == self.player_id then
+        return
+    end
+
+    if not is_number(player.x) or not is_number(player.y) then
+        return
+    end
+
+    if self.remote_instances[player.id] then
+        post_remote_state(self, player.id, player)
+        return
+    end
+
+    local properties = {}
+    properties[hash("/tank")] = {
+        is_local_player = false
+    }
+    properties[hash("/tank_turret")] = {
+        is_local_player = false
+    }
+
+    local position = vmath.vector3(player.x, player.y, 0)
+    local rotation = vmath.quat_rotation_z(player.body_angle or 0)
+
+    local ok, ids = pcall(function()
+        return collectionfactory.create(
+            TANK_FACTORY_URL,
+            position,
+            rotation,
+            properties
+        )
+    end)
+
+    if not ok or not ids then
+        log("Failed to create remote tank for " .. player.id .. ": " .. tostring(ids))
+        return
+    end
+
+    local root_id = ids[hash("/tank")]
+    if not root_id then
+        log("Remote tank collection did not contain root '/tank' for " .. player.id)
+        pprint(ids)
+        pcall(go.delete, ids)
+        return
+    end
+
+    self.remote_instances[player.id] = {
+        root_id = root_id,
+        ids = ids,
+    }
+
+    log("Created remote tank for " .. player.id .. " at "
+        .. string.format("%.1f, %.1f", player.x, player.y))
+
+    post_remote_state(self, player.id, player)
+    flush_pending_shots(self, player.id)
+end
+
+local function remember_player(self, player)
+    if type(player) ~= "table" or type(player.id) ~= "string" then
+        return
+    end
+
+    if player.id == self.player_id then
+        return
+    end
+
+    local old = self.remote_players[player.id] or {
+        id = player.id,
+        x = nil,
+        y = nil,
+        body_angle = 0,
+        turret_angle = 0,
+        state_seq = 0,
+    }
+
+    if is_number(player.spawn_index) then
+        old.spawn_index = player.spawn_index
+    end
+
+    if is_number(player.x) and is_number(player.y) then
+        if is_number(player.state_seq) and is_number(old.state_seq)
+            and player.state_seq < old.state_seq then
+            return
+        end
+
+        old.x = player.x
+        old.y = player.y
+
+        if is_number(player.body_angle) then
+            old.body_angle = player.body_angle
+        end
+        if is_number(player.turret_angle) then
+            old.turret_angle = player.turret_angle
+        end
+        if is_number(player.state_seq) then
+            old.state_seq = player.state_seq
+        end
+    end
+
+    self.remote_players[player.id] = old
+
+    if is_number(old.x) and is_number(old.y) then
+        create_remote_tank(self, old)
+    end
+end
+
+local function remove_remote_player(self, player_id)
+    if type(player_id) ~= "string" then
+        return
+    end
+
+    local instance = self.remote_instances[player_id]
+    if instance and instance.root_id then
+        pcall(go.delete, instance.root_id, true)
+    end
+
+    self.remote_instances[player_id] = nil
+    self.remote_players[player_id] = nil
+    self.pending_shots[player_id] = nil
+    log("Removed remote tank for " .. player_id)
+end
+
+local function clear_remote_players(self)
+    local ids = {}
+    for player_id in pairs(self.remote_instances) do
+        ids[#ids + 1] = player_id
+    end
+
+    for _, player_id in ipairs(ids) do
+        remove_remote_player(self, player_id)
+    end
+
+    self.remote_players = {}
+    self.remote_instances = {}
+    self.pending_shots = {}
+end
+
+local function find_remote_player_for_object(self, object_id)
+    if not object_id then
+        return nil
+    end
+
+    for player_id, instance in pairs(self.remote_instances) do
+        if instance.root_id == object_id then
+            return player_id
+        end
+    end
+
+    return nil
+end
+
+create_remote_shot = function(self, player_id, shot)
+    local instance = self.remote_instances[player_id]
+    if not instance then
+        local pending = self.pending_shots[player_id] or {}
+        -- Avoid growing an unbounded queue if a player has not sent a state yet.
+        if #pending < 8 then
+            pending[#pending + 1] = shot
+            self.pending_shots[player_id] = pending
+        end
+        return
+    end
+
+    local turret_id = instance.ids[hash("/tank_turret")]
+    if not turret_id then
+        log("Cannot show shot: remote turret missing for " .. player_id)
+        return
+    end
+
+    local position = vmath.vector3(
+        is_number(shot.x) and shot.x or 0,
+        is_number(shot.y) and shot.y or 0,
+        is_number(shot.z) and shot.z or 0.5
+    )
+    local angle = is_number(shot.angle) and shot.angle or 0
+    local rotation = vmath.quat_rotation_z(angle)
+
+    -- Make the muzzle flash visible on the receiving client.
+    local flash_url = msg.url("main", turret_id, hash("muzzle_flash_factory"))
+    local ok_flash, flash_id = pcall(factory.create, flash_url, position, rotation)
+    if ok_flash and flash_id then
+        pcall(msg.post, flash_id, "play_effect")
+    end
+
+    -- Each receiving client creates only a visual projectile. The shooter
+    -- reports a hit to the server; this copy must never apply damage itself.
+    local projectile_url = msg.url("main", turret_id, hash("projectile_factory"))
+    local ok_projectile, projectile_id = pcall(function()
+        return factory.create(projectile_url, position, rotation, {
+            is_visual_only = true,
+            owner_group = GROUP_TANK,
+            owner_id = instance.root_id,
+        })
+    end)
+
+    if not ok_projectile or not projectile_id then
+        log("Remote projectile creation failed for " .. player_id .. ": " .. tostring(projectile_id))
+        return
+    end
+
+    log("Displayed shot from " .. player_id)
+end
+
+local function handle_server_message(self, message)
+    if type(message) ~= "table" or type(message.type) ~= "string" then
+        log("Ignored malformed server message")
+        return
+    end
+
+    if message.type == "welcome" then
+        self.player_id = message.player_id
+        self.spawn_index = tonumber(message.spawn_index)
+
+        log("Connected as " .. tostring(self.player_id)
+            .. ", assigned spawn index " .. tostring(self.spawn_index)
+            .. ", existing players " .. tostring(#(message.players or {})))
+
+        msg.post(TANK_SPAWNER_URL, "network_player_ready", {
+            player_id = self.player_id,
+            spawn_index = self.spawn_index,
+        })
+
+        for _, player in ipairs(message.players or {}) do
+            remember_player(self, player)
+        end
+
+        send_json(self, { type = "client_ready" })
+
+    elseif message.type == "ready" then
+        log("Server marked client ready")
+
+    elseif message.type == "player_joined" then
+        remember_player(self, message.player)
+        if message.player then
+            log("Player joined: " .. tostring(message.player.id))
+        end
+
+    elseif message.type == "player_left" then
+        remove_remote_player(self, message.player_id)
+        log("Player left: " .. tostring(message.player_id))
+
+    elseif message.type == "player_inactive" then
+        remove_remote_player(self, message.player_id)
+        log("Player inactive: " .. tostring(message.player_id))
+
+    elseif message.type == "state" then
+        remember_player(self, {
+            id = message.player_id,
+            x = message.x,
+            y = message.y,
+            body_angle = message.body_angle,
+            turret_angle = message.turret_angle,
+            state_seq = message.state_seq,
+        })
+
+    elseif message.type == "shot" then
+        if type(message.player_id) == "string" and message.player_id ~= self.player_id then
+            create_remote_shot(self, message.player_id, message)
+        end
+
+    elseif message.type == "projectile_hit" then
+        log("Hit report: " .. tostring(message.player_id)
+            .. " -> " .. tostring(message.target_player_id)
+            .. " damage " .. tostring(message.damage))
+
+        -- Only the victim's own client changes its HP.
+        if message.target_player_id == self.player_id then
+            msg.post(TANK_SPAWNER_URL, "network_apply_damage", {
+                damage = tonumber(message.damage) or 0,
+                killer_id = message.player_id,
+                hit_x = message.x,
+                hit_y = message.y,
+            })
+        end
+
+    elseif message.type == "kill_feed" then
+        local killer_id = type(message.killer_id) == "string" and message.killer_id or "WORLD"
+        local victim_id = type(message.victim_id) == "string" and message.victim_id or nil
+
+        if victim_id then
+            log("Kill feed: " .. killer_id .. " -> " .. victim_id)
+            msg.post(HUD_URL, "killfeed_event", {
+                killer_id = killer_id,
+                victim_id = victim_id,
+            })
+        else
+            log("Ignored malformed kill_feed event")
+        end
+
+    elseif message.type == "error" then
+        log("Server error: " .. tostring(message.message))
+
+    else
+        log("Unknown server event: " .. tostring(message.type))
+    end
+end
+
+local function websocket_callback(self, connection, data)
+    if data.event == websocket.EVENT_CONNECTED then
+        self.connection = connection
+        self.connected = true
+        log("WebSocket connected to " .. SERVER_URL)
+
+    elseif data.event == websocket.EVENT_DISCONNECTED then
+        if self.connection == connection then
+            self.connection = nil
+        end
+        self.connected = false
+        self.player_id = nil
+        self.spawn_index = nil
+        self.local_state = nil
+        clear_remote_players(self)
+        msg.post(TANK_SPAWNER_URL, "network_disconnected")
+        log("Disconnected: " .. tostring(data.code or data.message or "no reason"))
+
+    elseif data.event == websocket.EVENT_ERROR then
+        log("WebSocket error: " .. tostring(data.message))
+        if data.handshake_response then
+            log("Handshake status: " .. tostring(data.handshake_response.status))
+        end
+
+    elseif data.event == websocket.EVENT_MESSAGE then
+        local ok, decoded = pcall(json.decode, data.message)
+        if not ok then
+            log("JSON decode failed: " .. tostring(decoded))
+            return
+        end
+        handle_server_message(self, decoded)
+    end
+end
+
+function init(self)
+    self.connection = nil
+    self.connected = false
+    self.player_id = nil
+    self.spawn_index = nil
+    self.remote_players = {}
+    self.remote_instances = {}
+    self.pending_shots = {}
+    self.local_state = nil
+    self.state_timer = 0
+
+    log("Connecting to " .. SERVER_URL)
+    self.connection = websocket.connect(SERVER_URL, {
+        timeout = 3000
+    }, websocket_callback)
+end
+
+function update(self, dt)
+    if not self.connected or self.local_state == nil then
+        return
+    end
+
+    self.state_timer = self.state_timer + dt
+    if self.state_timer < STATE_SEND_INTERVAL then
+        return
+    end
+    self.state_timer = self.state_timer - STATE_SEND_INTERVAL
+
+    send_json(self, {
+        type = "state",
+        x = self.local_state.x,
+        y = self.local_state.y,
+        body_angle = self.local_state.body_angle,
+        turret_angle = self.local_state.turret_angle,
+    })
+end
+
+function on_message(self, message_id, message, sender)
+    if message_id == hash("network_set_state") then
+        self.local_state = {
+            x = message.x or 0,
+            y = message.y or 0,
+            body_angle = message.body_angle or 0,
+            turret_angle = message.turret_angle or 0,
+        }
+
+    elseif message_id == hash("network_player_inactive") then
+        if self.connected then
+            send_json(self, { type = "player_inactive" })
+        end
+        self.local_state = nil
+        self.state_timer = 0
+
+    elseif message_id == hash("network_send_shot") then
+        send_json(self, {
+            type = "shot",
+            x = message.x or 0,
+            y = message.y or 0,
+            z = message.z or 0.5,
+            angle = message.angle or 0,
+            shot_id = message.shot_id or "",
+        })
+
+    elseif message_id == hash("network_player_killed") then
+        send_json(self, {
+            type = "player_killed",
+            killer_id = type(message.killer_id) == "string" and message.killer_id or "",
+        })
+
+    elseif message_id == hash("network_send_hit") then
+        local target_player_id = find_remote_player_for_object(self, message.target_gameobject_id)
+        if not target_player_id then
+            log("Hit was not sent: target Game Object is not a registered remote player")
+            return
+        end
+
+        send_json(self, {
+            type = "projectile_hit",
+            target_player_id = target_player_id,
+            damage = message.damage or 0,
+            x = message.x or 0,
+            y = message.y or 0,
+        })
+
+    elseif message_id == hash("network_disconnect") then
+        if self.connection ~= nil then
+            websocket.disconnect(self.connection)
+            self.connection = nil
+        end
+        self.connected = false
+        self.local_state = nil
+    end
+end
+
+function final(self)
+    if self.connection ~= nil then
+        websocket.disconnect(self.connection)
+        self.connection = nil
+    end
+end

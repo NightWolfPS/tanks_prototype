@@ -1,0 +1,138 @@
+-- projectile.script
+-- Player/bot projectiles, lifetime-dependent damage, impact effects and
+-- network hit reporting. Visual-only remote copies never apply damage.
+-- Defold 1.13.1
+
+go.property("speed", 500)
+go.property("lifetime", 2.0)
+go.property("damage", 25)
+go.property("min_damage", 5)
+go.property("owner_group", hash("tank"))
+go.property("owner_id", hash("/none"))
+go.property("is_visual_only", false)
+
+local GROUP_WORLD = hash("world")
+local GROUP_TANK = hash("tank")
+local GROUP_BOT = hash("bot")
+local NETWORK_URL = msg.url("main:/network_manager#network_manager")
+
+local function spawn_impact(self, position)
+    local ok, result = pcall(function()
+        local impact_id = factory.create("#impact_factory", position, vmath.quat())
+        msg.post(impact_id, "play_effect")
+    end)
+    if not ok then
+        print("[IMPACT] FACTORY ERROR: " .. tostring(result))
+    end
+end
+
+local function get_first_hit(result)
+    if type(result) == "table" and result.id == nil and result[1] ~= nil then
+        return result[1]
+    end
+    return result
+end
+
+local function get_current_damage(self)
+    local initial_damage = math.max(0, self.damage)
+    local minimum_damage = math.max(0, math.min(self.min_damage, initial_damage))
+    if self.lifetime <= 0 then
+        return minimum_damage
+    end
+
+    local progress = math.max(0, math.min(self.elapsed / self.lifetime, 1))
+    local current_damage = initial_damage + (minimum_damage - initial_damage) * progress
+    return math.max(0, math.floor(current_damage + 0.5))
+end
+
+local function apply_damage(self, result, impact_position)
+    if self.is_visual_only or not result or not result.id then
+        return
+    end
+
+    local group = result.group
+    if group ~= GROUP_TANK and group ~= GROUP_BOT then
+        return
+    end
+
+    if result.id == self.owner_id then
+        return
+    end
+
+    local current_damage = get_current_damage(self)
+
+    -- Player-owned projectiles hit other tank objects through the network relay.
+    -- Only the target player's client applies the actual HP change.
+    if self.owner_group == GROUP_TANK and group == GROUP_TANK then
+        print("[PROJECTILE] PvP hit candidate: " .. tostring(result.id)
+            .. ", damage " .. tostring(current_damage))
+        msg.post(NETWORK_URL, "network_send_hit", {
+            target_gameobject_id = result.id,
+            damage = current_damage,
+            x = impact_position.x,
+            y = impact_position.y,
+        })
+        return
+    end
+
+    -- Retain local damage for bots and existing non-network targets.
+    msg.post(result.id, "take_damage", {
+        damage = current_damage,
+        killer_id = self.owner_id,
+        killer_group = self.owner_group
+    })
+end
+
+function init(self)
+    self.elapsed = 0
+    self.hit = false
+
+    local rotation = go.get_rotation()
+    self.direction = vmath.rotate(rotation, vmath.vector3(0, 1, 0))
+
+    -- Every projectile can collide with tanks. The owner object is ignored in
+    -- update(), while friendly-tank filtering is intentionally removed for PvP.
+    self.collision_groups = { GROUP_WORLD, GROUP_TANK, GROUP_BOT }
+
+    print("[PROJECTILE] Initialized; visual_only=" .. tostring(self.is_visual_only)
+        .. ", initial_damage=" .. tostring(self.damage)
+        .. ", min_damage=" .. tostring(self.min_damage))
+end
+
+function update(self, dt)
+    if self.hit then return end
+
+    self.elapsed = self.elapsed + dt
+    if self.elapsed >= self.lifetime then
+        go.delete()
+        return
+    end
+
+    local from = go.get_position()
+    local to = from + self.direction * self.speed * dt
+    local result = physics.raycast(from, to, self.collision_groups)
+    result = get_first_hit(result)
+
+    if result then
+        -- Don't collide with the tank that fired the projectile.
+        if result.id == self.owner_id then
+            go.set_position(to)
+            return
+        end
+
+        self.hit = true
+        local impact_position = to
+        if type(result) == "table" then
+            if result.position then
+                impact_position = result.position
+            end
+            apply_damage(self, result, impact_position)
+        end
+
+        spawn_impact(self, impact_position)
+        go.delete()
+        return
+    end
+
+    go.set_position(to)
+end

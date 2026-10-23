@@ -1,0 +1,254 @@
+-- tank_controller.script
+-- Local tank movement/health plus remote-player interpolation.
+-- Defold 1.13.1
+
+go.property("move_speed", 180)
+go.property("turn_speed", 120)
+go.property("max_hp", 100)
+go.property("is_local_player", true)
+
+local TANK_SPAWNER_URL = msg.url("main:/tank_spawner#tank_spawner")
+local BOT_SPAWNER_URL = msg.url("main:/bot_spawner#bot_spawner")
+local NETWORK_URL = msg.url("main:/network_manager#network_manager")
+local HUD_URL = msg.url("main:/tank_hud#gui")
+
+local GROUP_TANK = hash("tank")
+local REMOTE_INTERPOLATION_SPEED = 14
+local REMOTE_TELEPORT_DISTANCE = 250
+
+local function clamp(value, min_value, max_value)
+    return math.max(min_value, math.min(max_value, value))
+end
+
+local function angle_difference(from_angle, to_angle)
+    return (to_angle - from_angle + math.pi) % (2 * math.pi) - math.pi
+end
+
+local function update_health_hud(self)
+    if not self.is_local_player then
+        return
+    end
+
+    msg.post(HUD_URL, "health_update", {
+        health = self.hp,
+        max_health = self.max_hp
+    })
+end
+
+local function send_network_state(self)
+    if not self.is_local_player or self.dead then
+        return
+    end
+
+    local position = go.get_position()
+    local turret_angle = 0
+    local ok, turret_rotation = pcall(go.get_rotation, "tank_turret")
+    if ok and turret_rotation then
+        local _, _, angle_degrees = vmath.quat_to_euler(turret_rotation)
+        turret_angle = math.rad(angle_degrees)
+    end
+
+    msg.post(NETWORK_URL, "network_set_state", {
+        x = position.x,
+        y = position.y,
+        body_angle = self.hull_angle,
+        turret_angle = turret_angle,
+    })
+end
+
+local function kill_player(self, killer_id)
+    if self.dead or not self.is_local_player then
+        return
+    end
+
+    self.dead = true
+    self.move_forward = false
+    self.move_backward = false
+    self.turn_left = false
+    self.turn_right = false
+
+    print("[PLAYER] Destroyed")
+    update_health_hud(self)
+
+    -- Announce the kill to the network relay. The server supplies the victim ID
+    -- from this WebSocket connection, so the client cannot choose another victim.
+    msg.post(NETWORK_URL, "network_player_killed", {
+        killer_id = type(killer_id) == "string" and killer_id or ""
+    })
+
+    msg.post(BOT_SPAWNER_URL, "player_died", {
+        player_id = go.get_id(),
+        killer_id = killer_id
+    })
+
+    msg.post(TANK_SPAWNER_URL, "player_destroyed")
+end
+
+local function update_remote_transform(self, dt)
+    if not self.remote_target_position then
+        return
+    end
+
+    local current_position = go.get_position()
+    local delta = self.remote_target_position - current_position
+    local alpha = clamp(dt * REMOTE_INTERPOLATION_SPEED, 0, 1)
+
+    if vmath.length(delta) >= REMOTE_TELEPORT_DISTANCE then
+        go.set_position(self.remote_target_position)
+        self.hull_angle = self.remote_target_angle
+    else
+        go.set_position(current_position + delta * alpha)
+        self.hull_angle = self.hull_angle
+            + angle_difference(self.hull_angle, self.remote_target_angle) * alpha
+    end
+
+    go.set_rotation(vmath.quat_rotation_z(self.hull_angle))
+end
+
+function init(self)
+    self.hp = self.max_hp
+    self.dead = false
+    self.correction = vmath.vector3(0, 0, 0)
+
+    self.move_forward = false
+    self.move_backward = false
+    self.turn_left = false
+    self.turn_right = false
+
+    local _, _, angle_degrees = vmath.quat_to_euler(go.get_rotation())
+    self.hull_angle = math.rad(angle_degrees)
+    self.remote_target_position = nil
+    self.remote_target_angle = self.hull_angle
+
+    if self.is_local_player then
+        msg.post(".", "acquire_input_focus")
+        msg.post(BOT_SPAWNER_URL, "register_player", { player_id = go.get_id() })
+        update_health_hud(self)
+        print("[PLAYER] Local player initialized. HP: " .. self.hp .. "/" .. self.max_hp)
+    else
+        print("[NETWORK] Remote tank controller initialized: " .. tostring(go.get_id()))
+    end
+end
+
+function on_input(self, action_id, action)
+    if not self.is_local_player then
+        return false
+    end
+
+    if self.dead then
+        return true
+    end
+
+    if action_id == hash("up") then
+        if action.pressed then self.move_forward = true
+        elseif action.released then self.move_forward = false end
+        return true
+    elseif action_id == hash("down") then
+        if action.pressed then self.move_backward = true
+        elseif action.released then self.move_backward = false end
+        return true
+    elseif action_id == hash("left") then
+        if action.pressed then self.turn_left = true
+        elseif action.released then self.turn_left = false end
+        return true
+    elseif action_id == hash("right") then
+        if action.pressed then self.turn_right = true
+        elseif action.released then self.turn_right = false end
+        return true
+    end
+
+    return false
+end
+
+function update(self, dt)
+    if not self.is_local_player then
+        update_remote_transform(self, dt)
+        return
+    end
+
+    if self.dead then
+        return
+    end
+
+    self.correction = vmath.vector3(0, 0, 0)
+
+    if self.turn_left then
+        self.hull_angle = self.hull_angle + math.rad(self.turn_speed) * dt
+    end
+    if self.turn_right then
+        self.hull_angle = self.hull_angle - math.rad(self.turn_speed) * dt
+    end
+
+    go.set_rotation(vmath.quat_rotation_z(self.hull_angle))
+
+    local direction = vmath.rotate(
+        vmath.quat_rotation_z(self.hull_angle),
+        vmath.vector3(0, 1, 0)
+    )
+    local movement = vmath.vector3(0, 0, 0)
+
+    if self.move_forward then movement = movement + direction * self.move_speed * dt end
+    if self.move_backward then movement = movement - direction * self.move_speed * dt end
+
+    go.set_position(go.get_position() + movement)
+    send_network_state(self)
+end
+
+function on_message(self, message_id, message, sender)
+    if message_id == hash("network_remote_state") and not self.is_local_player then
+        local current_position = go.get_position()
+        self.remote_target_position = vmath.vector3(
+            tonumber(message.x) or current_position.x,
+            tonumber(message.y) or current_position.y,
+            current_position.z
+        )
+        self.remote_target_angle = tonumber(message.body_angle) or self.hull_angle
+
+        local ok, turret_id = pcall(go.get_id, "tank_turret")
+        if ok and turret_id then
+            local turret_url = msg.url("main", turret_id, hash("turret_controller"))
+            msg.post(turret_url, "network_remote_turret_state", {
+                angle = tonumber(message.turret_angle) or 0
+            })
+        end
+        return
+    end
+
+    if not self.is_local_player or self.dead then
+        return
+    end
+
+    if message_id == hash("take_damage") or message_id == hash("network_apply_damage") then
+        local damage = tonumber(message.damage) or 0
+        if damage <= 0 then return end
+
+        self.hp = math.max(0, self.hp - damage)
+        print("[PLAYER] Took " .. damage .. " damage")
+        print("[PLAYER] HP: " .. self.hp .. "/" .. self.max_hp)
+        update_health_hud(self)
+
+        if self.hp <= 0 then
+            kill_player(self, message.killer_id or message.attacker_id)
+        end
+
+    elseif message_id == hash("get_hp") then
+        msg.post(sender, "hp_response", {
+            hp = self.hp,
+            max_hp = self.max_hp,
+            dead = self.dead
+        })
+
+    elseif message_id == hash("contact_point_response") then
+        -- Resolve all local kinematic contacts, including tank-vs-tank.
+        -- The remote tank does not move from contact callbacks; its owner drives it.
+        if message.distance and message.distance > 0 then
+            local penetration = message.normal * message.distance
+            local projection = vmath.project(self.correction, penetration)
+            if projection < 1 then
+                local compensation = penetration * (1 - projection)
+                go.set_position(go.get_position() + compensation)
+                self.correction = self.correction + compensation
+            end
+        end
+    end
+end
