@@ -85,7 +85,7 @@ vmath.vector3(0, 1, 0)
 
 local spawn_position = position
 + direction * self.muzzle_distance
-
+sound.play("#shoot")
 self.shot_counter = self.shot_counter + 1
 
 -- Client-generated ID. The server must associate this with

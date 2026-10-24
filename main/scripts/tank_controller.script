@@ -128,7 +128,7 @@ function init(self)
     self.hull_angle = math.rad(angle_degrees)
     self.remote_target_position = nil
     self.remote_target_angle = self.hull_angle
-
+    sound.play("#engine_idle")
     if self.is_local_player then
         msg.post(".", "acquire_input_focus")
         msg.post(BOT_SPAWNER_URL, "register_player", { player_id = go.get_id() })
@@ -149,20 +149,49 @@ function on_input(self, action_id, action)
     end
 
     if action_id == hash("up") then
-        if action.pressed then self.move_forward = true
-        elseif action.released then self.move_forward = false end
+        if action.pressed then 
+            self.move_forward = true
+            sound.stop("#engine_idle")
+            sound.play("#engine")
+            
+        elseif action.released then 
+            self.move_forward = false
+            sound.stop("#engine")
+            sound.play("#engine_idle")
+        end
         return true
     elseif action_id == hash("down") then
-        if action.pressed then self.move_backward = true
-        elseif action.released then self.move_backward = false end
+        if action.pressed then 
+            self.move_backward = true
+            sound.stop("#engine_idle")
+            sound.play("#engine")
+        elseif action.released then 
+            self.move_backward = false
+            sound.stop("#engine")
+            sound.play("#engine_idle")
+        end
         return true
     elseif action_id == hash("left") then
-        if action.pressed then self.turn_left = true
-        elseif action.released then self.turn_left = false end
+        if action.pressed then 
+            self.turn_left = true
+            sound.stop("#engine_idle")
+            sound.play("#engine")
+        elseif action.released then 
+            self.turn_left = false
+            sound.stop("#engine")
+            sound.play("#engine_idle")
+        end
         return true
     elseif action_id == hash("right") then
-        if action.pressed then self.turn_right = true
-        elseif action.released then self.turn_right = false end
+        if action.pressed then 
+            self.turn_right = true
+            sound.stop("#engine_idle")
+            sound.play("#engine")
+        elseif action.released then 
+            self.turn_right = false
+            sound.stop("#engine")
+            sound.play("#engine_idle")
+        end
         return true
     end
 
