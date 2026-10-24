@@ -2,6 +2,7 @@ name: "tank"
 instances {
   id: "tank"
   prototype: "/main/objects/tank.go"
+  children: "tank_name"
   children: "tank_turret"
   component_properties {
     id: "tank_controller"
@@ -21,6 +22,7 @@ instances {
   id: "tank_turret"
   prototype: "/main/objects/tank_turret.go"
   position {
+    y: -12.0
     z: 0.5
   }
   component_properties {
@@ -35,6 +37,17 @@ instances {
       value: "4.5"
       type: PROPERTY_TYPE_NUMBER
     }
+  }
+}
+instances {
+  id: "tank_name"
+  prototype: "/main/objects/tank_name.go"
+  position {
+    y: 63.0
+  }
+  scale3 {
+    x: 0.8
+    y: 0.8
   }
 }
 scale_along_z: 0

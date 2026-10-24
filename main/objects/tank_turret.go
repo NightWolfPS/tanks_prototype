@@ -6,6 +6,19 @@ components {
     value: "6.0"
     type: PROPERTY_TYPE_NUMBER
   }
+  properties {
+    id: "muzzle_distance"
+    value: "85.0"
+    type: PROPERTY_TYPE_NUMBER
+  }
+}
+components {
+  id: "shoot"
+  component: "/main/sounds/shoot.sound"
+}
+components {
+  id: "turret1"
+  component: "/main/sounds/turret.sound"
 }
 embedded_components {
   id: "turret"
@@ -14,9 +27,16 @@ embedded_components {
   "material: \"/builtins/materials/sprite.material\"\n"
   "textures {\n"
   "  sampler: \"texture_sampler\"\n"
-  "  texture: \"/main/assets/tank/weapon.tilesource\"\n"
+  "  texture: \"/main/assets/tank/medium_turret.tilesource\"\n"
   "}\n"
   ""
+  position {
+    y: 24.0
+  }
+  scale {
+    x: 0.2
+    y: 0.2
+  }
 }
 embedded_components {
   id: "projectile_factory"

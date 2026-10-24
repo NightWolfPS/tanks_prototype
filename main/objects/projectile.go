@@ -22,6 +22,14 @@ components {
     type: PROPERTY_TYPE_NUMBER
   }
 }
+components {
+  id: "impact_proj"
+  component: "/main/sounds/impact_proj.sound"
+}
+components {
+  id: "impact"
+  component: "/main/sounds/impact.sound"
+}
 embedded_components {
   id: "sprite"
   type: "sprite"

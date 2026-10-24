@@ -2,6 +2,14 @@ components {
   id: "effect"
   component: "/main/scripts/impact.script"
 }
+components {
+  id: "impact"
+  component: "/main/sounds/impact.sound"
+}
+components {
+  id: "impact_proj"
+  component: "/main/sounds/impact_proj.sound"
+}
 embedded_components {
   id: "sprite"
   type: "sprite"

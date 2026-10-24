@@ -17,6 +17,18 @@ components {
     type: PROPERTY_TYPE_NUMBER
   }
 }
+components {
+  id: "engine"
+  component: "/main/sounds/engine.sound"
+}
+components {
+  id: "death"
+  component: "/main/sounds/death.sound"
+}
+components {
+  id: "engine_idle"
+  component: "/main/sounds/engine_idle.sound"
+}
 embedded_components {
   id: "tank_hull"
   type: "sprite"
@@ -24,11 +36,15 @@ embedded_components {
   "material: \"/builtins/materials/sprite.material\"\n"
   "textures {\n"
   "  sampler: \"texture_sampler\"\n"
-  "  texture: \"/main/assets/tank/tank_hull.tilesource\"\n"
+  "  texture: \"/main/assets/tank/light_tank.tilesource\"\n"
   "}\n"
   ""
   position {
     z: 0.1
+  }
+  scale {
+    x: 0.2
+    y: 0.2
   }
 }
 embedded_components {
@@ -54,7 +70,7 @@ embedded_components {
   "    id: \"collision\"\n"
   "  }\n"
   "  data: 36.5\n"
-  "  data: 40.0\n"
+  "  data: 52.5\n"
   "  data: 10.0\n"
   "}\n"
   ""

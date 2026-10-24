@@ -1,0 +1,18 @@
+name: "tank_combined"
+instances {
+  id: "tank"
+  prototype: "/main/objects/tank.go"
+  children: "tank_turret"
+}
+instances {
+  id: "tank_turret"
+  prototype: "/main/objects/tank_turret.go"
+  position {
+    z: 0.1
+  }
+}
+instances {
+  id: "tank_name"
+  prototype: "/main/objects/tank_name.go"
+}
+scale_along_z: 0
