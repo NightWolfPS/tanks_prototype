@@ -134,11 +134,3 @@ embedded_instances {
     y: 166.0
   }
 }
-embedded_instances {
-  id: "network_manager"
-  data: "components {\n"
-  "  id: \"network_manager\"\n"
-  "  component: \"/main/scripts/network_manager.script\"\n"
-  "}\n"
-  ""
-}
