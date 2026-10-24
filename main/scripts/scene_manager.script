@@ -1,0 +1,153 @@
+
+-- scene_manager.script
+-- Persistent scene switching through Collection Proxy.
+-- Defold 1.13.1
+-- Network manager remains in bootstrap.collection.
+
+local MENU_PROXY = "#main_menu_proxy"
+local BATTLE_PROXY = "#battle_proxy"
+local GARAGE_PROXY = "#garage_proxy"
+
+local NETWORK_MANAGER_URL =
+msg.url("bootstrap:/network_manager#network_manager")
+
+local SCENES = {
+	main_menu = {
+		proxy = MENU_PROXY,
+		socket = "main_menu_proxy"
+	},
+	battle = {
+		proxy = BATTLE_PROXY,
+		socket = "battle_proxy"
+	},
+	garage = {
+		proxy = GARAGE_PROXY,
+		socket = "garage_proxy"
+	}
+}
+
+local function log(message)
+	print("[SCENE MANAGER] " .. tostring(message))
+end
+
+local function notify_network(self, scene_name, socket_name)
+	msg.post(NETWORK_MANAGER_URL, "network_scene_changed", {
+		scene = scene_name or "none",
+		socket = socket_name or ""
+	})
+
+	log("Network scene updated: " .. tostring(scene_name))
+end
+
+local function load_scene(self, scene_name)
+	local target = SCENES[scene_name]
+
+	if not target then
+		log("Unknown scene: " .. tostring(scene_name))
+		return
+	end
+
+	if scene_name == "garage" and not self.garage_available then
+		log("Garage proxy is not configured yet")
+		return
+	end
+
+	if self.active_scene == scene_name and not self.transitioning then
+		log("Scene is already active: " .. scene_name)
+		return
+	end
+
+	if self.transitioning then
+		log("Scene transition already in progress")
+		return
+	end
+
+	self.transitioning = true
+	self.target_scene = scene_name
+	self.target_proxy = target.proxy
+	self.target_socket = target.socket
+
+	-- Prevent messages from being routed into the scene being unloaded.
+	notify_network(self, "none", "")
+
+	if self.active_proxy then
+		log("Disabling current scene: " .. tostring(self.active_scene))
+		msg.post(self.active_proxy, "disable")
+	else
+		log("Loading scene: " .. scene_name)
+		msg.post(self.target_proxy, "load")
+	end
+end
+
+function init(self)
+	self.active_scene = nil
+	self.active_proxy = nil
+
+	self.target_scene = "main_menu"
+	self.target_proxy = MENU_PROXY
+	self.target_socket = "main_menu_proxy"
+
+	self.transitioning = true
+
+	-- Keep false until garage.collection is created and assigned
+	-- to the garage_proxy component in bootstrap.collection.
+	self.garage_available = false
+
+	notify_network(self, "none", "")
+
+	log("Loading main menu")
+	msg.post(self.target_proxy, "load")
+end
+
+function on_message(self, message_id, message, sender)
+	if message_id == hash("open_battle") then
+		load_scene(self, "battle")
+		return
+
+	elseif message_id == hash("open_garage") then
+		load_scene(self, "garage")
+		return
+
+	elseif message_id == hash("return_to_menu") then
+		load_scene(self, "main_menu")
+		return
+	end
+
+	if message_id == hash("proxy_loaded") then
+		if self.target_proxy then
+			log("Collection loaded; initializing " .. self.target_scene)
+			msg.post(self.target_proxy, "init")
+		end
+
+	elseif message_id == hash("proxy_initialized") then
+		if self.target_proxy then
+			msg.post(self.target_proxy, "enable")
+		end
+
+	elseif message_id == hash("proxy_enabled") then
+		self.active_scene = self.target_scene
+		self.active_proxy = self.target_proxy
+		self.transitioning = false
+
+		notify_network(self, self.active_scene, self.target_socket)
+
+		log("Active scene: " .. tostring(self.active_scene)
+		.. ", socket: " .. tostring(self.target_socket))
+
+	elseif message_id == hash("proxy_disabled") then
+		if self.active_proxy then
+			msg.post(self.active_proxy, "unload")
+		end
+
+	elseif message_id == hash("proxy_unloaded") then
+		self.active_scene = nil
+		self.active_proxy = nil
+
+		if self.target_proxy then
+			log("Loading next scene: " .. tostring(self.target_scene))
+			msg.post(self.target_proxy, "load")
+		else
+			self.transitioning = false
+		end
+	end
+end
