@@ -86,7 +86,7 @@ if type(self.shot_id) ~= "string" or self.shot_id == "" then
 print("[PROJECTILE] ERROR: PvP projectile has no shot_id")
 return
 end
-
+sound.play("#impact")
 print(
 "[PROJECTILE] PvP hit candidate: "
 .. tostring(result.id)

@@ -124,6 +124,8 @@ function init(self)
     self.turn_left = false
     self.turn_right = false
 
+    self.engine_sound_playing = false
+    
     local _, _, angle_degrees = vmath.quat_to_euler(go.get_rotation())
     self.hull_angle = math.rad(angle_degrees)
     self.remote_target_position = nil
@@ -139,6 +141,28 @@ function init(self)
     end
 end
 
+local function update_engine_sound(self)
+    local is_moving =
+    self.move_forward or
+    self.move_backward or
+    self.turn_left or
+    self.turn_right
+
+    if is_moving then
+        if not self.engine_sound_playing then
+            sound.stop("#engine_idle")
+            sound.play("#engine")
+            self.engine_sound_playing = true
+        end
+    else
+        if self.engine_sound_playing then
+            sound.stop("#engine")
+            sound.play("#engine_idle")
+            self.engine_sound_playing = false
+        end
+    end
+end
+
 function on_input(self, action_id, action)
     if not self.is_local_player then
         return false
@@ -149,49 +173,39 @@ function on_input(self, action_id, action)
     end
 
     if action_id == hash("up") then
-        if action.pressed then 
+        if action.pressed then
             self.move_forward = true
-            sound.stop("#engine_idle")
-            sound.play("#engine")
-            
-        elseif action.released then 
+        elseif action.released then
             self.move_forward = false
-            sound.stop("#engine")
-            sound.play("#engine_idle")
         end
+        update_engine_sound(self)
         return true
+
     elseif action_id == hash("down") then
-        if action.pressed then 
+        if action.pressed then
             self.move_backward = true
-            sound.stop("#engine_idle")
-            sound.play("#engine")
-        elseif action.released then 
+        elseif action.released then
             self.move_backward = false
-            sound.stop("#engine")
-            sound.play("#engine_idle")
         end
+        update_engine_sound(self)
         return true
+
     elseif action_id == hash("left") then
-        if action.pressed then 
+        if action.pressed then
             self.turn_left = true
-            sound.stop("#engine_idle")
-            sound.play("#engine")
-        elseif action.released then 
+        elseif action.released then
             self.turn_left = false
-            sound.stop("#engine")
-            sound.play("#engine_idle")
         end
+        update_engine_sound(self)
         return true
+
     elseif action_id == hash("right") then
-        if action.pressed then 
+        if action.pressed then
             self.turn_right = true
-            sound.stop("#engine_idle")
-            sound.play("#engine")
-        elseif action.released then 
+        elseif action.released then
             self.turn_right = false
-            sound.stop("#engine")
-            sound.play("#engine_idle")
         end
+        update_engine_sound(self)
         return true
     end
 

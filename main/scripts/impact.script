@@ -13,6 +13,7 @@ function on_message(self, message_id, message, sender)
 	end
 
 	self.played = true
+	sound.play("#impact_proj")
 
 	print("[IMPACT] Playing explosion animation")
 

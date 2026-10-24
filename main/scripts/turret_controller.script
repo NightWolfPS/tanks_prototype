@@ -203,18 +203,22 @@ end
 
 if action_id == hash("z") then
 if action.pressed then
-self.turret_left = true
+    self.turret_left = true
+    sound.play("#turret1")
 elseif action.released then
-self.turret_left = false
+    self.turret_left = false
+    sound.stop("#turret1")
 end
 
 return true
 
 elseif action_id == hash("x") then
 if action.pressed then
-self.turret_right = true
+    self.turret_right = true
+    sound.play("#turret1")
 elseif action.released then
-self.turret_right = false
+    self.turret_right = false
+    sound.stop("#turret1")
 end
 
 return true

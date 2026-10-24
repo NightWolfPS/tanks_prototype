@@ -156,7 +156,7 @@ if not self.tank_root then
     print("[SPAWNER] No tank instance to destroy")
     return false
 end
-
+sound.play("#death")
 pcall(function()
     msg.post(CAMERA_URL, "clear_target")
 end)
