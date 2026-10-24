@@ -1,10 +1,21 @@
 -- tank_name.script
--- World-space nickname displayed above each tank.
+-- Shows nicknames for remote tanks; local tank can hide its own nickname.
 -- Defold 1.13.1
 
 function init(self)
     self.player_name = "PLAYER"
-    label.set_text("#label", self.player_name)
+    self.hidden = true
+    -- Keep the label blank until the tank controller tells us whether
+    -- this is the local tank or a remote tank.
+    label.set_text("#label", "")
+end
+
+local function refresh_label(self)
+    if self.hidden then
+        label.set_text("#label", "")
+    else
+        label.set_text("#label", self.player_name)
+    end
 end
 
 function on_message(self, message_id, message, sender)
@@ -13,7 +24,17 @@ function on_message(self, message_id, message, sender)
         if #name > 18 then
             name = string.sub(name, 1, 18)
         end
+
         self.player_name = name
-        label.set_text("#label", self.player_name)
+        self.hidden = message.hide_name == true
+        refresh_label(self)
+
+    elseif message_id == hash("hide_player_name") then
+        self.hidden = true
+        refresh_label(self)
+
+    elseif message_id == hash("show_player_name") then
+        self.hidden = false
+        refresh_label(self)
     end
 end

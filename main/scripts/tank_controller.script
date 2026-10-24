@@ -217,7 +217,8 @@ function on_message(self, message_id, message, sender)
         local ok, name_id = pcall(go.get_id, "tank_name")
         if ok and name_id then
             msg.post(msg.url("main", name_id, nil), "set_player_name", {
-                name = tostring(message.name or "PLAYER")
+                name = tostring(message.name or "PLAYER"),
+                hide_name = message.hide_name == true
             })
         end
         return

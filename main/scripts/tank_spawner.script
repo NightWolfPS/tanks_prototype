@@ -128,7 +128,8 @@ self.respawn_authorized = false
 self.respawn_requested = false
 
 msg.post(root_id, "set_player_name", {
-    name = self.network_player_id or "PLAYER"
+    name = self.network_player_id or "PLAYER",
+    hide_name = true
 })
 
 local target_url = msg.url("main", root_id, nil)

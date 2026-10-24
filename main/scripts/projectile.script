@@ -3,9 +3,9 @@
 -- Defold 1.13.1
 
 go.property("speed", 500)
-go.property("lifetime", 2.0)
-go.property("damage", 25)
-go.property("min_damage", 5)
+go.property("lifetime", 1.5)
+go.property("damage", 30)
+go.property("min_damage", 1)
 go.property("owner_group", hash("tank"))
 go.property("owner_id", hash("/none"))
 go.property("is_visual_only", false)
