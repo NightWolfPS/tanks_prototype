@@ -1,0 +1,263 @@
+
+-- main_menu.gui_script
+-- Main menu with mouse input diagnostics.
+-- Defold 1.13.1
+
+local COLORS = {
+	background = vmath.vector4(0.055, 0.075, 0.085, 1.0),
+	panel = vmath.vector4(0.10, 0.13, 0.14, 1.0),
+	button = vmath.vector4(0.16, 0.22, 0.23, 1.0),
+	accent = vmath.vector4(0.91, 0.63, 0.20, 1.0),
+	text = vmath.vector4(0.93, 0.94, 0.90, 1.0),
+	muted = vmath.vector4(0.58, 0.65, 0.64, 1.0)
+}
+
+local BUTTON_WIDTH = 300
+local BUTTON_HEIGHT = 58
+local BUTTON_GAP = 16
+
+local function log(message)
+	print("[MAIN MENU] " .. tostring(message))
+end
+
+local function create_box(position, size, color)
+	local node = gui.new_box_node(position, size)
+	gui.set_color(node, color)
+	return node
+end
+
+local function create_text(position, value, scale, color)
+	local node = gui.new_text_node(position, value)
+	gui.set_scale(node, vmath.vector3(scale, scale, 1))
+	gui.set_color(node, color)
+	return node
+end
+
+local function create_button(self, id, label, y)
+	local center_x = self.width * 0.5
+
+	local box = create_box(
+	vmath.vector3(center_x, y, 0),
+	vmath.vector3(
+	self.button_width,
+	self.button_height,
+	0
+),
+COLORS.button
+)
+
+local text = create_text(
+vmath.vector3(center_x, y, 0.1),
+label,
+self.scale,
+COLORS.text
+)
+
+table.insert(self.buttons, {
+id = id,
+box = box,
+label = text
+})
+end
+
+local function build_menu(self)
+self.width = gui.get_width()
+self.height = gui.get_height()
+
+self.scale = math.min(
+1,
+self.width / 640,
+self.height / 480
+)
+
+self.button_width = BUTTON_WIDTH * self.scale
+self.button_height = BUTTON_HEIGHT * self.scale
+self.button_gap = BUTTON_GAP * self.scale
+
+self.background = create_box(
+vmath.vector3(
+self.width * 0.5,
+self.height * 0.5,
+-1
+),
+vmath.vector3(self.width, self.height, 0),
+COLORS.background
+)
+
+self.panel = create_box(
+vmath.vector3(
+self.width * 0.5,
+self.height * 0.5,
+-0.5
+),
+vmath.vector3(
+math.min(self.width * 0.82, 500 * self.scale),
+math.min(self.height * 0.88, 570 * self.scale),
+0
+),
+COLORS.panel
+)
+
+local center_x = self.width * 0.5
+
+self.title = create_text(
+vmath.vector3(center_x, self.height * 0.77, 0),
+"TANKS",
+2.0 * self.scale,
+COLORS.accent
+)
+
+self.subtitle = create_text(
+vmath.vector3(center_x, self.height * 0.71, 0),
+"CORPORATE COMBAT",
+0.75 * self.scale,
+COLORS.muted
+)
+
+self.buttons = {}
+
+local first_y = self.height * 0.55
+local step = self.button_height + self.button_gap
+
+create_button(self, "battle", "BATTLE", first_y)
+create_button(self, "garage", "GARAGE", first_y - step)
+create_button(self, "exit", "EXIT", first_y - step * 2)
+
+self.footer = create_text(
+vmath.vector3(center_x, self.height * 0.13, 0),
+"HELIOS DYNAMICS / VANGUARD GROUP",
+0.55 * self.scale,
+COLORS.muted
+)
+
+log("Menu created. GUI size: "
+.. tostring(self.width) .. "x" .. tostring(self.height))
+log("Buttons created: " .. tostring(#self.buttons))
+end
+
+local function destroy_menu(self)
+local single_nodes = {
+"background",
+"panel",
+"title",
+"subtitle",
+"footer"
+}
+
+for _, key in ipairs(single_nodes) do
+if self[key] then
+gui.delete_node(self[key])
+self[key] = nil
+end
+end
+
+if self.buttons then
+for _, button in ipairs(self.buttons) do
+gui.delete_node(button.label)
+gui.delete_node(button.box)
+end
+
+self.buttons = {}
+end
+end
+
+
+local function activate_button(self, id)
+	if id == "battle" then
+		log("BATTLE selected")
+		msg.post("bootstrap:/scene_manager#scene_manager", "open_battle")
+
+	elseif id == "garage" then
+		log("GARAGE selected")
+		msg.post("bootstrap:/scene_manager#scene_manager", "open_garage")
+
+	elseif id == "exit" then
+		log("EXIT selected")
+		sys.exit(0)
+	end
+end
+
+
+function init(self)
+self.buttons = {}
+self.pressed_button = nil
+
+build_menu(self)
+
+msg.post(".", "acquire_input_focus")
+log("Input focus requested")
+end
+
+function final(self)
+destroy_menu(self)
+end
+
+function on_input(self, action_id, action)
+if action_id ~= hash("touch") then
+return false
+end
+
+if not action then
+log("Touch event received without action data")
+return false
+end
+
+if action.pressed then
+log("Mouse/button pressed at x="
+.. tostring(action.x) .. ", y=" .. tostring(action.y))
+
+self.pressed_button = nil
+
+for _, button in ipairs(self.buttons) do
+local hit = gui.pick_node(
+button.box,
+action.x,
+action.y
+)
+
+log("Hit test " .. button.id .. ": " .. tostring(hit))
+
+if hit then
+self.pressed_button = button.id
+log("Pressed button: " .. button.id)
+return true
+end
+end
+
+log("Click did not hit any button")
+return false
+end
+
+if action.released then
+log("Mouse/button released at x="
+.. tostring(action.x) .. ", y=" .. tostring(action.y))
+
+local selected_id = self.pressed_button
+self.pressed_button = nil
+
+if not selected_id then
+log("No button was pressed before release")
+return false
+end
+
+for _, button in ipairs(self.buttons) do
+if button.id == selected_id then
+local hit = gui.pick_node(
+button.box,
+action.x,
+action.y
+)
+
+if hit then
+activate_button(self, selected_id)
+return true
+else
+log("Released outside button: " .. selected_id)
+return false
+end
+end
+end
+end
+
+return false
+end

@@ -1,0 +1,873 @@
+-- tank_hud.gui_script
+-- HUD здоровья, перезарядки, серверная таблица игроков и Kill Feed.
+-- Defold 1.13.1
+
+local BAR_WIDTH = 280
+local BAR_HEIGHT = 5
+local BOTTOM_MARGIN = 42
+local BAR_GAP = 10
+
+local MAX_PLAYERS = 6
+local SCOREBOARD_WIDTH = 500
+local SCOREBOARD_ROW_HEIGHT = 22
+local SCOREBOARD_MARGIN = 12
+local SCORE_FONT = "default"
+
+-- Kill Feed
+local KILLFEED_MAX_ROWS = 5
+local KILLFEED_ROW_HEIGHT = 22
+local KILLFEED_WIDTH = 320
+local KILLFEED_MARGIN = 12
+local KILLFEED_LIFETIME = 6.0
+local KILLFEED_FONT = "default"
+
+local COLOR_BACKGROUND = vmath.vector4(0.12, 0.13, 0.14, 0.95)
+local COLOR_RELOAD = vmath.vector4(0.92, 0.68, 0.20, 1.0)
+local COLOR_HEALTH = vmath.vector4(0.26, 0.78, 0.38, 1.0)
+local COLOR_BORDER = vmath.vector4(0.40, 0.42, 0.43, 1.0)
+local COLOR_TICK = vmath.vector4(0.20, 0.21, 0.22, 1.0)
+
+local COLOR_SCORE_BG = vmath.vector4(0.04, 0.05, 0.07, 0.94)
+local COLOR_SCORE_HEADER = vmath.vector4(0.92, 0.76, 0.36, 1.0)
+local COLOR_SCORE_TEXT = vmath.vector4(0.88, 0.91, 0.93, 1.0)
+local COLOR_PLAYER = vmath.vector4(0.35, 0.90, 0.52, 1.0)
+
+local COLOR_KILLFEED_BG = vmath.vector4(0, 0, 0, 0.9)
+local COLOR_KILLER = vmath.vector4(0.40, 0.93, 0.58, 1.0)
+local COLOR_KILLFEED_ARROW = vmath.vector4(0.95, 0.78, 0.38, 1.0)
+local COLOR_VICTIM = vmath.vector4(1.0, 0.42, 0.36, 1.0)
+
+
+-- =========================================================
+-- Общие GUI-хелперы
+-- =========================================================
+
+local function make_box(position, size, color)
+    local node = gui.new_box_node(position, size)
+    gui.set_color(node, color)
+    return node
+end
+
+local function create_score_text(position, text, color, scale)
+    local node = gui.new_text_node(position, text)
+    gui.set_font(node, SCORE_FONT)
+    gui.set_color(node, color)
+    gui.set_scale(node, vmath.vector3(scale, scale, 1))
+    return node
+end
+
+local function create_killfeed_text(position, text, color, scale)
+    local node = gui.new_text_node(position, text)
+    gui.set_font(node, KILLFEED_FONT)
+    gui.set_color(node, color)
+    gui.set_scale(node, vmath.vector3(scale, scale, 1))
+    gui.set_enabled(node, false)
+    return node
+end
+
+local function clamp(value, minimum, maximum)
+    return math.max(minimum, math.min(maximum, value))
+end
+
+local function short_id(value, fallback)
+    if type(value) ~= "string" or value == "" then
+        value = fallback
+    end
+
+    value = tostring(value or "UNKNOWN")
+
+    if #value > 18 then
+        value = string.sub(value, 1, 15) .. "..."
+    end
+
+    return value
+end
+
+
+-- =========================================================
+-- Шкалы здоровья и перезарядки
+-- =========================================================
+
+local function create_bar()
+    local bar = {}
+
+    bar.background = make_box(
+    vmath.vector3(0, 0, 0),
+    vmath.vector3(BAR_WIDTH, BAR_HEIGHT, 0),
+    COLOR_BACKGROUND
+)
+
+bar.fill = make_box(
+vmath.vector3(0, 0, 1),
+vmath.vector3(BAR_WIDTH, BAR_HEIGHT - 2, 0),
+COLOR_HEALTH
+)
+
+bar.top = make_box(
+vmath.vector3(0, 0, 1),
+vmath.vector3(BAR_WIDTH + 2, 1, 0),
+COLOR_BORDER
+)
+
+bar.bottom = make_box(
+vmath.vector3(0, 0, 1),
+vmath.vector3(BAR_WIDTH + 2, 1, 0),
+COLOR_BORDER
+)
+
+bar.left = make_box(
+vmath.vector3(0, 0, 1),
+vmath.vector3(1, BAR_HEIGHT + 2, 0),
+COLOR_BORDER
+)
+
+bar.right = make_box(
+vmath.vector3(0, 0, 1),
+vmath.vector3(1, BAR_HEIGHT + 2, 0),
+COLOR_BORDER
+)
+
+bar.ticks = {}
+
+for i = 1, 9 do
+bar.ticks[i] = make_box(
+vmath.vector3(0, 0, 1),
+vmath.vector3(1, BAR_HEIGHT - 2, 0),
+COLOR_TICK
+)
+end
+
+return bar
+end
+
+local function layout_bar(bar, center_x, center_y)
+local left_x = center_x - BAR_WIDTH * 0.5
+local right_x = center_x + BAR_WIDTH * 0.5
+
+gui.set_position(
+bar.background,
+vmath.vector3(center_x, center_y, 0)
+)
+
+gui.set_position(
+bar.top,
+vmath.vector3(center_x, center_y + BAR_HEIGHT * 0.5, 2)
+)
+
+gui.set_position(
+bar.bottom,
+vmath.vector3(center_x, center_y - BAR_HEIGHT * 0.5, 2)
+)
+
+gui.set_position(
+bar.left,
+vmath.vector3(left_x, center_y, 2)
+)
+
+gui.set_position(
+bar.right,
+vmath.vector3(right_x, center_y, 2)
+)
+
+for i, tick in ipairs(bar.ticks) do
+local x = left_x + BAR_WIDTH * i / 10
+
+gui.set_position(
+tick,
+vmath.vector3(x, center_y, 2)
+)
+end
+
+bar.center_x = center_x
+bar.center_y = center_y
+bar.left_x = left_x
+end
+
+local function set_bar_progress(bar, progress)
+progress = clamp(progress, 0, 1)
+
+local filled_width = BAR_WIDTH * progress
+
+gui.set_size(
+bar.fill,
+vmath.vector3(
+math.max(filled_width, 0.01),
+BAR_HEIGHT - 2,
+0
+)
+)
+
+gui.set_position(
+bar.fill,
+vmath.vector3(
+bar.left_x + filled_width * 0.5,
+bar.center_y,
+1
+)
+)
+
+gui.set_enabled(bar.fill, progress > 0)
+end
+
+
+-- =========================================================
+-- Серверная таблица игроков
+-- Скрыта по умолчанию, открывается при удержании TAB.
+-- =========================================================
+
+local function create_scoreboard(self)
+self.scoreboard_bg = make_box(
+vmath.vector3(0, 0, 0),
+vmath.vector3(SCOREBOARD_WIDTH, 80, 0),
+COLOR_SCORE_BG
+)
+
+self.score_title = create_score_text(
+vmath.vector3(0, 0, 1),
+"DEATHMATCH",
+COLOR_SCORE_HEADER,
+0.72
+)
+
+self.score_header_name = create_score_text(
+vmath.vector3(0, 0, 1),
+"PLAYER ID",
+COLOR_SCORE_HEADER,
+0.58
+)
+
+self.score_header_points = create_score_text(
+vmath.vector3(0, 0, 1),
+"POINTS",
+COLOR_SCORE_HEADER,
+0.58
+)
+
+self.score_header_damage = create_score_text(
+vmath.vector3(0, 0, 1),
+"DMG",
+COLOR_SCORE_HEADER,
+0.58
+)
+
+self.score_header_ping = create_score_text(
+vmath.vector3(0, 0, 1),
+"PING",
+COLOR_SCORE_HEADER,
+0.58
+)
+
+self.score_header_k = create_score_text(
+vmath.vector3(0, 0, 1),
+"K",
+COLOR_SCORE_HEADER,
+0.58
+)
+
+self.score_header_d = create_score_text(
+vmath.vector3(0, 0, 1),
+"D",
+COLOR_SCORE_HEADER,
+0.58
+)
+
+self.score_rows = {}
+
+for row = 0, MAX_PLAYERS - 1 do
+self.score_rows[row] = {
+name = create_score_text(
+vmath.vector3(0, 0, 1),
+"",
+COLOR_SCORE_TEXT,
+0.62
+),
+
+points = create_score_text(
+vmath.vector3(0, 0, 1),
+"",
+COLOR_SCORE_TEXT,
+0.62
+),
+
+damage = create_score_text(
+vmath.vector3(0, 0, 1),
+"",
+COLOR_SCORE_TEXT,
+0.62
+),
+
+ping = create_score_text(
+vmath.vector3(0, 0, 1),
+"",
+COLOR_SCORE_TEXT,
+0.62
+),
+
+kills = create_score_text(
+vmath.vector3(0, 0, 1),
+"",
+COLOR_SCORE_TEXT,
+0.62
+),
+
+deaths = create_score_text(
+vmath.vector3(0, 0, 1),
+"",
+COLOR_SCORE_TEXT,
+0.62
+)
+}
+end
+
+self.server_scoreboard_rows = {}
+self.scoreboard_entries = {}
+self.score_row_count = 0
+self.scoreboard_visible = false
+
+gui.set_enabled(self.scoreboard_bg, false)
+gui.set_enabled(self.score_title, false)
+gui.set_enabled(self.score_header_name, false)
+gui.set_enabled(self.score_header_points, false)
+gui.set_enabled(self.score_header_damage, false)
+gui.set_enabled(self.score_header_ping, false)
+gui.set_enabled(self.score_header_k, false)
+gui.set_enabled(self.score_header_d, false)
+
+for row = 0, MAX_PLAYERS - 1 do
+local nodes = self.score_rows[row]
+
+gui.set_enabled(nodes.name, false)
+gui.set_enabled(nodes.points, false)
+gui.set_enabled(nodes.damage, false)
+gui.set_enabled(nodes.ping, false)
+gui.set_enabled(nodes.kills, false)
+gui.set_enabled(nodes.deaths, false)
+end
+end
+
+local function collect_server_scoreboard_entries(self)
+local entries = {}
+
+-- row=0 — первое место, далее рейтинг идёт по порядку сервера.
+-- Не добавляем отсутствующие строки, поэтому пробелов не будет.
+for row = 0, MAX_PLAYERS - 1 do
+local entry = self.server_scoreboard_rows[row]
+
+if entry then
+entries[#entries + 1] = entry
+end
+end
+
+return entries
+end
+
+local function layout_scoreboard(self)
+local screen_width = gui.get_width()
+local screen_height = gui.get_height()
+
+local entries = self.scoreboard_entries or {}
+local count = math.min(#entries, MAX_PLAYERS)
+
+self.score_row_count = count
+
+-- Высота панели зависит только от количества строк с игроками.
+local panel_height = 80
+
+if count > 1 then
+panel_height =
+panel_height + (count - 1) * SCOREBOARD_ROW_HEIGHT
+end
+
+-- Центрируем панель относительно экрана.
+local center_x = screen_width * 0.5
+local center_y = screen_height * 0.5
+local top_y = center_y + panel_height * 0.5
+local left_x = center_x - SCOREBOARD_WIDTH * 0.5
+
+local visible = self.scoreboard_visible and count > 0
+
+gui.set_size(
+self.scoreboard_bg,
+vmath.vector3(SCOREBOARD_WIDTH, panel_height, 0)
+)
+
+gui.set_position(
+self.scoreboard_bg,
+vmath.vector3(center_x, center_y, 0)
+)
+
+gui.set_position(
+self.score_title,
+vmath.vector3(center_x, top_y - 17, 1)
+)
+
+gui.set_position(self.score_header_name, vmath.vector3(left_x + 48, top_y - 42, 1))
+gui.set_position(self.score_header_points, vmath.vector3(left_x + 240, top_y - 42, 1))
+gui.set_position(self.score_header_damage, vmath.vector3(left_x + 310, top_y - 42, 1))
+gui.set_position(self.score_header_ping, vmath.vector3(left_x + 375, top_y - 42, 1))
+gui.set_position(self.score_header_k, vmath.vector3(left_x + 435, top_y - 42, 1))
+gui.set_position(self.score_header_d, vmath.vector3(left_x + 470, top_y - 42, 1))
+
+gui.set_enabled(self.scoreboard_bg, visible)
+gui.set_enabled(self.score_title, visible)
+gui.set_enabled(self.score_header_name, visible)
+gui.set_enabled(self.score_header_points, visible)
+gui.set_enabled(self.score_header_damage, visible)
+gui.set_enabled(self.score_header_ping, visible)
+gui.set_enabled(self.score_header_k, visible)
+gui.set_enabled(self.score_header_d, visible)
+
+for row = 0, MAX_PLAYERS - 1 do
+local nodes = self.score_rows[row]
+local entry = entries[row + 1]
+local row_visible = visible and entry ~= nil
+
+gui.set_enabled(nodes.name, row_visible)
+gui.set_enabled(nodes.points, row_visible)
+gui.set_enabled(nodes.damage, row_visible)
+gui.set_enabled(nodes.ping, row_visible)
+gui.set_enabled(nodes.kills, row_visible)
+gui.set_enabled(nodes.deaths, row_visible)
+
+if row_visible then
+local y =
+top_y - 63 - row * SCOREBOARD_ROW_HEIGHT
+
+gui.set_position(nodes.name, vmath.vector3(left_x + 48, y, 1))
+gui.set_position(nodes.points, vmath.vector3(left_x + 240, y, 1))
+gui.set_position(nodes.damage, vmath.vector3(left_x + 310, y, 1))
+gui.set_position(nodes.ping, vmath.vector3(left_x + 375, y, 1))
+gui.set_position(nodes.kills, vmath.vector3(left_x + 435, y, 1))
+gui.set_position(nodes.deaths, vmath.vector3(left_x + 470, y, 1))
+
+gui.set_text(nodes.name, entry.player_id)
+gui.set_text(nodes.points, tostring(entry.points))
+gui.set_text(nodes.damage, tostring(entry.damage))
+gui.set_text(nodes.ping, entry.ping > 0 and (tostring(entry.ping) .. "ms") or "--")
+gui.set_text(nodes.kills, tostring(entry.kills))
+gui.set_text(nodes.deaths, tostring(entry.deaths))
+
+local row_color =
+entry.is_local and COLOR_PLAYER or COLOR_SCORE_TEXT
+
+gui.set_color(nodes.name, row_color)
+gui.set_color(nodes.points, row_color)
+gui.set_color(nodes.damage, row_color)
+gui.set_color(nodes.ping, row_color)
+gui.set_color(nodes.kills, row_color)
+gui.set_color(nodes.deaths, row_color)
+end
+end
+
+self.score_screen_width = screen_width
+self.score_screen_height = screen_height
+end
+
+local function refresh_scoreboard(self)
+self.scoreboard_entries =
+collect_server_scoreboard_entries(self)
+
+layout_scoreboard(self)
+end
+
+local function reset_server_scoreboard(self, count)
+self.expected_scoreboard_count =
+clamp(tonumber(count) or 0, 0, MAX_PLAYERS)
+
+self.server_scoreboard_rows = {}
+self.scoreboard_entries = {}
+self.score_row_count = 0
+
+refresh_scoreboard(self)
+end
+
+local function update_server_scoreboard_row(self, message)
+local row = tonumber(message.row)
+
+if row == nil or row < 0 or row >= MAX_PLAYERS then
+return
+end
+
+local player_id = tostring(
+message.player_id or message.name or "UNKNOWN"
+)
+
+if #player_id > 18 then
+player_id = string.sub(player_id, 1, 15) .. "..."
+end
+
+self.server_scoreboard_rows[row] = {
+player_id = player_id,
+points = math.max(0, tonumber(message.points) or 0),
+damage = math.max(0, tonumber(message.damage) or 0),
+ping = math.max(0, tonumber(message.ping) or 0),
+kills = math.max(0, tonumber(message.kills) or 0),
+deaths = math.max(0, tonumber(message.deaths) or 0),
+is_local = message.is_local == true
+}
+
+refresh_scoreboard(self)
+end
+
+local function set_scoreboard_visible(self, visible)
+if self.scoreboard_visible == visible then
+return
+end
+
+self.scoreboard_visible = visible
+refresh_scoreboard(self)
+end
+
+
+-- =========================================================
+-- Kill Feed
+-- =========================================================
+
+local function create_killfeed(self)
+self.killfeed_bg = make_box(
+vmath.vector3(0, 0, 1),
+vmath.vector3(KILLFEED_WIDTH, 30, 0),
+COLOR_KILLFEED_BG
+)
+
+self.killfeed_title = create_killfeed_text(
+vmath.vector3(0, 0, 1),
+" ",
+COLOR_SCORE_HEADER,
+0.58
+)
+
+self.killfeed_rows = {}
+self.killfeed_entries = {}
+
+for row = 1, KILLFEED_MAX_ROWS do
+self.killfeed_rows[row] = {
+killer = create_killfeed_text(
+vmath.vector3(0, 0, 1),
+"",
+COLOR_KILLER,
+0.52
+),
+
+arrow = create_killfeed_text(
+vmath.vector3(0, 0, 1),
+">",
+COLOR_KILLFEED_ARROW,
+0.52
+),
+
+victim = create_killfeed_text(
+vmath.vector3(0, 0, 1),
+"",
+COLOR_VICTIM,
+0.52
+)
+}
+end
+
+gui.set_enabled(self.killfeed_bg, false)
+gui.set_enabled(self.killfeed_title, false)
+end
+
+local function layout_killfeed(self)
+local count = math.min(
+#self.killfeed_entries,
+KILLFEED_MAX_ROWS
+)
+
+local visible = count > 0
+
+gui.set_enabled(self.killfeed_bg, visible)
+gui.set_enabled(self.killfeed_title, visible)
+
+for row = 1, KILLFEED_MAX_ROWS do
+local nodes = self.killfeed_rows[row]
+local entry = self.killfeed_entries[row]
+local row_visible = entry ~= nil
+
+gui.set_enabled(nodes.killer, row_visible)
+gui.set_enabled(nodes.arrow, row_visible)
+gui.set_enabled(nodes.victim, row_visible)
+
+if row_visible then
+gui.set_text(nodes.killer, entry.killer_id)
+gui.set_text(nodes.arrow, ">")
+gui.set_text(nodes.victim, entry.victim_id)
+
+local alpha =
+entry.remaining < 1
+and clamp(entry.remaining, 0, 1)
+or 1
+
+gui.set_color(
+nodes.killer,
+vmath.vector4(
+COLOR_KILLER.x,
+COLOR_KILLER.y,
+COLOR_KILLER.z,
+alpha
+)
+)
+
+gui.set_color(
+nodes.arrow,
+vmath.vector4(
+COLOR_KILLFEED_ARROW.x,
+COLOR_KILLFEED_ARROW.y,
+COLOR_KILLFEED_ARROW.z,
+alpha
+)
+)
+
+gui.set_color(
+nodes.victim,
+vmath.vector4(
+COLOR_VICTIM.x,
+COLOR_VICTIM.y,
+COLOR_VICTIM.z,
+alpha
+)
+)
+end
+end
+
+if not visible then
+return
+end
+
+local screen_width = gui.get_width()
+local screen_height = gui.get_height()
+
+local right_x = screen_width - KILLFEED_MARGIN
+local top_y = screen_height - KILLFEED_MARGIN
+local left_x = right_x - KILLFEED_WIDTH
+local panel_height = 28 + count * KILLFEED_ROW_HEIGHT
+
+local center_x = (left_x + right_x) * 0.5
+local center_y = top_y - panel_height * 0.5
+
+gui.set_size(
+self.killfeed_bg,
+vmath.vector3(KILLFEED_WIDTH, panel_height, 0)
+)
+
+gui.set_position(
+self.killfeed_bg,
+vmath.vector3(center_x, center_y, 1)
+)
+
+gui.set_position(
+self.killfeed_title,
+vmath.vector3(left_x + 46, top_y - 13, 1)
+)
+
+for row = 1, count do
+local nodes = self.killfeed_rows[row]
+local y =
+top_y - 31 - (row - 1) * KILLFEED_ROW_HEIGHT
+
+gui.set_position(
+nodes.killer,
+vmath.vector3(left_x + 62, y, 1)
+)
+
+gui.set_position(
+nodes.arrow,
+vmath.vector3(left_x + 160, y, 1)
+)
+
+gui.set_position(
+nodes.victim,
+vmath.vector3(left_x + 250, y, 1)
+)
+end
+end
+
+local function add_killfeed_event(self, killer_id, victim_id)
+if type(victim_id) ~= "string" or victim_id == "" then
+print("[HUD] Ignored killfeed event without victim ID")
+return
+end
+
+local entry = {
+killer_id = short_id(killer_id, "WORLD"),
+victim_id = short_id(victim_id, "UNKNOWN"),
+remaining = KILLFEED_LIFETIME
+}
+
+table.insert(self.killfeed_entries, 1, entry)
+
+while #self.killfeed_entries > KILLFEED_MAX_ROWS do
+table.remove(self.killfeed_entries)
+end
+
+print(
+"[HUD] Kill Feed: "
+.. entry.killer_id
+.. " -> "
+.. entry.victim_id
+)
+
+layout_killfeed(self)
+end
+
+local function update_killfeed(self, dt)
+local changed = false
+
+for index = #self.killfeed_entries, 1, -1 do
+local entry = self.killfeed_entries[index]
+entry.remaining = entry.remaining - dt
+
+if entry.remaining <= 0 then
+table.remove(self.killfeed_entries, index)
+changed = true
+end
+end
+
+local has_fading_entry = false
+
+for _, entry in ipairs(self.killfeed_entries) do
+if entry.remaining < 1 then
+has_fading_entry = true
+break
+end
+end
+
+if changed or has_fading_entry then
+layout_killfeed(self)
+end
+end
+
+
+-- =========================================================
+-- Общий layout
+-- =========================================================
+
+local function layout(self)
+local screen_width = gui.get_width()
+local screen_height = gui.get_height()
+local center_x = screen_width * 0.5
+
+local reload_y =
+BOTTOM_MARGIN + BAR_HEIGHT * 0.5
+
+local health_y =
+reload_y + BAR_HEIGHT + BAR_GAP
+
+layout_bar(self.health_bar, center_x, health_y)
+layout_bar(self.reload_bar, center_x, reload_y)
+layout_scoreboard(self)
+layout_killfeed(self)
+
+self.screen_width = screen_width
+self.screen_height = screen_height
+end
+
+
+-- =========================================================
+-- Жизненный цикл GUI
+-- =========================================================
+
+function init(self)
+self.health = 100
+self.max_health = 100
+self.reload_progress = 1
+
+self.health_bar = create_bar()
+self.reload_bar = create_bar()
+
+gui.set_color(self.health_bar.fill, COLOR_HEALTH)
+gui.set_color(self.reload_bar.fill, COLOR_RELOAD)
+
+create_scoreboard(self)
+create_killfeed(self)
+
+layout(self)
+
+set_bar_progress(self.health_bar, 1)
+set_bar_progress(self.reload_bar, 1)
+
+-- Получаем TAB для открытия/закрытия таблицы.
+msg.post(".", "acquire_input_focus")
+end
+
+function update(self, dt)
+update_killfeed(self, dt)
+
+local width = gui.get_width()
+local height = gui.get_height()
+
+if width ~= self.screen_width
+or height ~= self.screen_height then
+layout(self)
+
+set_bar_progress(
+self.health_bar,
+self.health / self.max_health
+)
+
+set_bar_progress(
+self.reload_bar,
+self.reload_progress
+)
+end
+end
+
+function on_input(self, action_id, action)
+if action_id == hash("show_scoreboard") then
+if action.pressed then
+set_scoreboard_visible(self, true)
+elseif action.released then
+set_scoreboard_visible(self, false)
+end
+
+return true
+end
+
+return false
+end
+
+function on_message(self, message_id, message, sender)
+if message_id == hash("reload_progress") then
+self.reload_progress = clamp(
+message.progress or 0,
+0,
+1
+)
+
+set_bar_progress(
+self.reload_bar,
+self.reload_progress
+)
+
+elseif message_id == hash("health_update") then
+self.max_health = math.max(
+1,
+message.max_health or self.max_health
+)
+
+self.health = clamp(
+message.health or self.health,
+0,
+self.max_health
+)
+
+set_bar_progress(
+self.health_bar,
+self.health / self.max_health
+)
+
+elseif message_id == hash("server_scoreboard_reset") then
+reset_server_scoreboard(self, message.count)
+
+elseif message_id == hash("server_scoreboard_row") then
+update_server_scoreboard_row(self, message)
+
+elseif message_id == hash("killfeed_event") then
+add_killfeed_event(
+self,
+message.killer_id,
+message.victim_id
+)
+end
+end
