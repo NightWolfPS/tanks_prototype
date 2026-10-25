@@ -1,4 +1,3 @@
-
 -- turret_controller.script
 -- Local turret aiming/firing and remote turret interpolation.
 -- Defold 1.13.1
@@ -13,96 +12,131 @@ local RELOAD_HUD_URL = msg.url("main:/tank_hud#gui")
 
 local REMOTE_INTERPOLATION_SPEED = 16
 local LASER_RANGE = 800
-local LASER_GROUPS = { hash("world"), hash("tank"), hash("bot") }
+local LASER_GROUPS = {
+    hash("world"),
+    hash("tank"),
+    hash("bot")
+}
 
 local function clamp(value, min_value, max_value)
     return math.max(min_value, math.min(max_value, value))
 end
 
 local function get_first_hit(result)
-    if type(result) == "table" and result.id == nil and result[1] ~= nil then
+    if type(result) == "table"
+    and result.id == nil
+    and result[1] ~= nil then
         return result[1]
     end
+
     return result
 end
 
 local function update_laser(self)
-    if not self.laser_id then return end
+    if not self.laser_id then
+        return
+    end
 
     local rotation = go.get_world_rotation()
     local turret_position = go.get_world_position()
-    local direction = vmath.rotate(rotation, vmath.vector3(0, 1, 0))
-    local start_position = turret_position + direction * self.muzzle_distance
-    local end_position = start_position + direction * LASER_RANGE
-
-    local hit = get_first_hit(
-    physics.raycast(start_position, end_position, LASER_GROUPS)
-)
-
-if type(hit) == "table" and hit.position then
-    end_position = hit.position
-end
-
-local delta = end_position - start_position
-local length = math.max(1, vmath.length(delta))
-local center = start_position + direction * (length * 0.5)
-center.z = 0.3
-
-pcall(go.set_position, center, self.laser_id)
-pcall(go.set_rotation, rotation, self.laser_id)
-pcall(go.set_scale, vmath.vector3(2, length, 1), self.laser_id)
-end
-
-local function angle_difference(from_angle, to_angle)
-return (to_angle - from_angle + math.pi) % (2 * math.pi) - math.pi
-end
-
-local function send_reload_progress(self)
-if not self.is_local_player then return end
-
-local progress = 1
-
-if self.fire_cooldown > 0 then
-    progress = 1 - self.fire_timer / self.fire_cooldown
-end
-
-progress = clamp(progress, 0, 1)
-
-msg.post(RELOAD_HUD_URL, "reload_progress", {
-    progress = progress
-})
-end
-
-local function fire(self)
-    local rotation = go.get_world_rotation()
-    local position = go.get_world_position()
 
     local direction = vmath.rotate(
     rotation,
     vmath.vector3(0, 1, 0)
 )
 
-local spawn_position = position + direction * self.muzzle_distance
+local start_position =
+turret_position + direction * self.muzzle_distance
+
+local end_position =
+start_position + direction * LASER_RANGE
+
+local hit = get_first_hit(
+physics.raycast(
+start_position,
+end_position,
+LASER_GROUPS
+)
+)
+
+if type(hit) == "table" and hit.position then
+end_position = hit.position
+end
+
+local delta = end_position - start_position
+local length = math.max(1, vmath.length(delta))
+local center = start_position + direction * (length * 0.5)
+
+center.z = 0.3
+
+pcall(go.set_position, center, self.laser_id)
+pcall(go.set_rotation, rotation, self.laser_id)
+pcall(
+go.set_scale,
+vmath.vector3(2, length, 1),
+self.laser_id
+)
+end
+
+local function angle_difference(from_angle, to_angle)
+return (to_angle - from_angle + math.pi)
+% (2 * math.pi) - math.pi
+end
+
+local function send_reload_progress(self)
+if not self.is_local_player then
+return
+end
+
+local progress = 1
+
+if self.fire_cooldown > 0 then
+progress = 1 - self.fire_timer / self.fire_cooldown
+end
+
+progress = clamp(progress, 0, 1)
+
+msg.post(RELOAD_HUD_URL, "reload_progress", {
+progress = progress
+})
+end
+
+local function fire(self)
+local rotation = go.get_world_rotation()
+local position = go.get_world_position()
+
+local direction = vmath.rotate(
+rotation,
+vmath.vector3(0, 1, 0)
+)
+
+local spawn_position =
+position + direction * self.muzzle_distance
 
 sound.play("#shoot")
+
 self.shot_counter = self.shot_counter + 1
 
-local shot_id = tostring(go.get_id()) .. "_" .. tostring(self.shot_counter)
+local shot_id =
+tostring(go.get_id()) .. "_" .. tostring(self.shot_counter)
 
 print("[TURRET] Fire requested: " .. shot_id)
 
 local ok_flash, flash_id = pcall(function()
-    return factory.create(
-    "#muzzle_flash_factory",
-    spawn_position,
-    rotation
+return factory.create(
+"#muzzle_flash_factory",
+spawn_position,
+rotation
 )
 end)
 
 if ok_flash and flash_id then
 msg.post(flash_id, "play_effect")
 else
-print("[TURRET] MUZZLE FACTORY ERROR: " .. tostring(flash_id))
+print(
+"[TURRET] MUZZLE FACTORY ERROR: "
+.. tostring(flash_id)
+)
 end
 
 local owner_id = go.get_parent() or go.get_id()
@@ -113,17 +147,20 @@ return factory.create(
 spawn_position,
 rotation,
 {
-    damage = 30,
-    min_damage = 1,
-    owner_group = hash("tank"),
-    owner_id = owner_id,
-    is_visual_only = false
+damage = 30,
+min_damage = 1,
+owner_group = hash("tank"),
+owner_id = owner_id,
+is_visual_only = false
 }
 )
 end)
 
 if not ok_projectile or not projectile_id then
-print("[TURRET] PROJECTILE FACTORY ERROR: " .. tostring(projectile_id))
+print(
+"[TURRET] PROJECTILE FACTORY ERROR: "
+.. tostring(projectile_id)
+)
 return
 end
 
@@ -131,8 +168,7 @@ msg.post(projectile_id, "set_shot_id", {
 shot_id = shot_id
 })
 
--- Передаём серверу угол фактического направления полёта.
--- Угол измеряется от оси +X, в радианах.
+-- Angle of the actual projectile direction, measured from +X.
 local angle = math.atan2(direction.y, direction.x)
 
 msg.post(NETWORK_URL, "network_send_shot", {
@@ -144,10 +180,21 @@ shot_id = shot_id
 })
 end
 
+local function clear_turret_input(self)
+self.turret_left = false
+self.turret_right = false
+self.fire_pressed = false
+
+sound.stop("#turret1")
+end
+
 function init(self)
 self.turret_left = false
 self.turret_right = false
 self.fire_pressed = false
+
+-- Battle menu blocks only local turret controls.
+self.battle_menu_open = false
 
 self.fire_timer = 0
 self.shot_counter = 0
@@ -172,7 +219,12 @@ end)
 
 if ok_laser and laser_id then
 self.laser_id = laser_id
-local laser_sprite_url = msg.url("main", laser_id, hash("sprite"))
+
+local laser_sprite_url = msg.url(
+"main",
+laser_id,
+hash("sprite")
+)
 
 pcall(
 sprite.set_constant,
@@ -182,17 +234,31 @@ vmath.vector4(1, 0.08, 0.08, 0.32)
 )
 else
 self.laser_id = nil
-print("[TURRET] Laser sight unavailable: " .. tostring(laser_id))
+
+print(
+"[TURRET] Laser sight unavailable: "
+.. tostring(laser_id)
+)
 end
 
 send_reload_progress(self)
 else
-print("[NETWORK] Remote turret initialized: " .. tostring(go.get_id()))
+print(
+"[NETWORK] Remote turret initialized: "
+.. tostring(go.get_id())
+)
 end
 end
 
 function on_input(self, action_id, action)
-if not self.is_local_player then return false end
+if not self.is_local_player then
+return false
+end
+
+-- Consume all local turret input while the battle menu is open.
+if self.battle_menu_open then
+return true
+end
 
 if action_id == hash("z") then
 if action.pressed then
@@ -202,6 +268,7 @@ elseif action.released then
 self.turret_left = false
 sound.stop("#turret1")
 end
+
 return true
 
 elseif action_id == hash("x") then
@@ -212,6 +279,7 @@ elseif action.released then
 self.turret_right = false
 sound.stop("#turret1")
 end
+
 return true
 
 elseif action_id == hash("space") then
@@ -220,6 +288,7 @@ self.fire_pressed = true
 elseif action.released then
 self.fire_pressed = false
 end
+
 return true
 end
 
@@ -227,9 +296,14 @@ return false
 end
 
 function update(self, dt)
+-- Remote turrets continue to interpolate normally.
 if not self.is_local_player then
 if self.remote_target_angle ~= nil then
-local alpha = clamp(dt * REMOTE_INTERPOLATION_SPEED, 0, 1)
+local alpha = clamp(
+dt * REMOTE_INTERPOLATION_SPEED,
+0,
+1
+)
 
 self.turret_angle = self.turret_angle
 + angle_difference(
@@ -237,12 +311,30 @@ self.turret_angle,
 self.remote_target_angle
 ) * alpha
 
-go.set_rotation(vmath.quat_rotation_z(self.turret_angle))
+go.set_rotation(
+vmath.quat_rotation_z(self.turret_angle)
+)
 end
+
 return
 end
 
 self.stun_timer = math.max(0, self.stun_timer - dt)
+
+-- Do not rotate or fire while the menu is open.
+-- The reload timer, laser and HUD still update.
+if self.battle_menu_open then
+clear_turret_input(self)
+
+if self.fire_timer > 0 then
+self.fire_timer = math.max(0, self.fire_timer - dt)
+end
+
+update_laser(self)
+send_reload_progress(self)
+
+return
+end
 
 if self.stun_timer <= 0 then
 if self.turret_left then
@@ -256,7 +348,9 @@ self.turret_angle = self.turret_angle
 end
 end
 
-go.set_rotation(vmath.quat_rotation_z(self.turret_angle))
+go.set_rotation(
+vmath.quat_rotation_z(self.turret_angle)
+)
 
 update_laser(self)
 
@@ -264,7 +358,10 @@ if self.fire_timer > 0 then
 self.fire_timer = math.max(0, self.fire_timer - dt)
 end
 
-if self.fire_pressed and self.fire_timer <= 0 and self.stun_timer <= 0 then
+if self.fire_pressed
+and self.fire_timer <= 0
+and self.stun_timer <= 0 then
+
 fire(self)
 
 local reload_multiplier = 1
@@ -281,23 +378,49 @@ send_reload_progress(self)
 end
 
 function on_message(self, message_id, message, sender)
-if message_id == hash("network_remote_turret_state")
-and not self.is_local_player then
-self.remote_target_angle = tonumber(message.angle) or self.turret_angle
+if message_id == hash("battle_menu_state") then
+if self.is_local_player then
+self.battle_menu_open = message.open == true
 
-elseif message_id == hash("status_effects") and self.is_local_player then
-local effects = type(message.effects) == "table" and message.effects or {}
-
-if tonumber(effects.stun_duration) and effects.stun_duration > 0 then
-self.stun_timer = math.max(self.stun_timer, effects.stun_duration)
+if self.battle_menu_open then
+clear_turret_input(self)
+end
 end
 
-if tonumber(effects.gun_damage_reloads) and effects.gun_damage_reloads > 0 then
+return
+end
+
+if message_id == hash("network_remote_turret_state")
+and not self.is_local_player then
+
+self.remote_target_angle =
+tonumber(message.angle) or self.turret_angle
+
+elseif message_id == hash("status_effects")
+and self.is_local_player then
+
+local effects =
+type(message.effects) == "table" and message.effects or {}
+
+if tonumber(effects.stun_duration)
+and effects.stun_duration > 0 then
+
+self.stun_timer = math.max(
+self.stun_timer,
+effects.stun_duration
+)
+end
+
+if tonumber(effects.gun_damage_reloads)
+and effects.gun_damage_reloads > 0 then
+
 self.gun_damage_reloads = math.max(
 self.gun_damage_reloads,
 math.floor(effects.gun_damage_reloads)
 )
-self.fire_timer = self.fire_cooldown * self.gun_reload_penalty
+
+self.fire_timer =
+self.fire_cooldown * self.gun_reload_penalty
 end
 
 if effects.expired == "stun" then
@@ -307,6 +430,8 @@ end
 end
 
 function final(self)
+sound.stop("#turret1")
+
 if self.laser_id then
 pcall(go.delete, self.laser_id)
 self.laser_id = nil

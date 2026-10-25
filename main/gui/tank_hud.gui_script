@@ -1,5 +1,6 @@
 -- tank_hud.gui_script
--- HUD здоровья, перезарядки, серверная таблица игроков и Kill Feed.
+-- HUD здоровья, перезарядки, серверная таблица игроков,
+-- Kill Feed и боевое меню.
 -- Defold 1.13.1
 
 local BAR_WIDTH = 280
@@ -13,7 +14,6 @@ local SCOREBOARD_ROW_HEIGHT = 22
 local SCOREBOARD_MARGIN = 12
 local SCORE_FONT = "default"
 
--- Kill Feed
 local KILLFEED_MAX_ROWS = 5
 local KILLFEED_ROW_HEIGHT = 22
 local KILLFEED_WIDTH = 320
@@ -37,6 +37,23 @@ local COLOR_KILLER = vmath.vector4(0.40, 0.93, 0.58, 1.0)
 local COLOR_KILLFEED_ARROW = vmath.vector4(0.95, 0.78, 0.38, 1.0)
 local COLOR_VICTIM = vmath.vector4(1.0, 0.42, 0.36, 1.0)
 
+-- Battle menu colors
+local COLOR_MENU_OVERLAY = vmath.vector4(0.015, 0.025, 0.03, 0.78)
+local COLOR_MENU_PANEL = vmath.vector4(0.055, 0.075, 0.085, 1.0)
+local COLOR_MENU_BORDER = vmath.vector4(0.91, 0.63, 0.20, 1.0)
+local COLOR_MENU_BUTTON = vmath.vector4(0.12, 0.16, 0.17, 1.0)
+local COLOR_MENU_BUTTON_HOVER = vmath.vector4(0.19, 0.24, 0.24, 1.0)
+local COLOR_MENU_TEXT = vmath.vector4(0.93, 0.94, 0.90, 1.0)
+local COLOR_MENU_MUTED = vmath.vector4(0.58, 0.65, 0.64, 1.0)
+local COLOR_MENU_DANGER = vmath.vector4(0.55, 0.16, 0.13, 1.0)
+
+local MENU_PANEL_WIDTH = 360
+local MENU_PANEL_HEIGHT = 250
+local MENU_BUTTON_WIDTH = 280
+local MENU_BUTTON_HEIGHT = 46
+
+local TANK_SPAWNER_URL = msg.url("main:/tank_spawner#tank_spawner")
+local SCENE_MANAGER_URL = msg.url("bootstrap:/scene_manager#scene_manager")
 
 -- =========================================================
 -- Общие GUI-хелперы
@@ -83,6 +100,11 @@ local function short_id(value, fallback)
     return value
 end
 
+local function set_node_enabled(node, enabled)
+    if node then
+        gui.set_enabled(node, enabled)
+    end
+end
 
 -- =========================================================
 -- Шкалы здоровья и перезарядки
@@ -209,10 +231,8 @@ bar.center_y,
 gui.set_enabled(bar.fill, progress > 0)
 end
 
-
 -- =========================================================
 -- Серверная таблица игроков
--- Скрыта по умолчанию, открывается при удержании TAB.
 -- =========================================================
 
 local function create_scoreboard(self)
@@ -348,8 +368,6 @@ end
 local function collect_server_scoreboard_entries(self)
 local entries = {}
 
--- row=0 — первое место, далее рейтинг идёт по порядку сервера.
--- Не добавляем отсутствующие строки, поэтому пробелов не будет.
 for row = 0, MAX_PLAYERS - 1 do
 local entry = self.server_scoreboard_rows[row]
 
@@ -370,7 +388,6 @@ local count = math.min(#entries, MAX_PLAYERS)
 
 self.score_row_count = count
 
--- Высота панели зависит только от количества строк с игроками.
 local panel_height = 80
 
 if count > 1 then
@@ -378,7 +395,6 @@ panel_height =
 panel_height + (count - 1) * SCOREBOARD_ROW_HEIGHT
 end
 
--- Центрируем панель относительно экрана.
 local center_x = screen_width * 0.5
 local center_y = screen_height * 0.5
 local top_y = center_y + panel_height * 0.5
@@ -430,8 +446,7 @@ gui.set_enabled(nodes.kills, row_visible)
 gui.set_enabled(nodes.deaths, row_visible)
 
 if row_visible then
-local y =
-top_y - 63 - row * SCOREBOARD_ROW_HEIGHT
+local y = top_y - 63 - row * SCOREBOARD_ROW_HEIGHT
 
 gui.set_position(nodes.name, vmath.vector3(left_x + 48, y, 1))
 gui.set_position(nodes.points, vmath.vector3(left_x + 240, y, 1))
@@ -443,7 +458,10 @@ gui.set_position(nodes.deaths, vmath.vector3(left_x + 470, y, 1))
 gui.set_text(nodes.name, entry.player_id)
 gui.set_text(nodes.points, tostring(entry.points))
 gui.set_text(nodes.damage, tostring(entry.damage))
-gui.set_text(nodes.ping, entry.ping > 0 and (tostring(entry.ping) .. "ms") or "--")
+gui.set_text(
+nodes.ping,
+entry.ping > 0 and (tostring(entry.ping) .. "ms") or "--"
+)
 gui.set_text(nodes.kills, tostring(entry.kills))
 gui.set_text(nodes.deaths, tostring(entry.deaths))
 
@@ -517,7 +535,6 @@ end
 self.scoreboard_visible = visible
 refresh_scoreboard(self)
 end
-
 
 -- =========================================================
 -- Kill Feed
@@ -663,8 +680,7 @@ vmath.vector3(left_x + 46, top_y - 13, 1)
 
 for row = 1, count do
 local nodes = self.killfeed_rows[row]
-local y =
-top_y - 31 - (row - 1) * KILLFEED_ROW_HEIGHT
+local y = top_y - 31 - (row - 1) * KILLFEED_ROW_HEIGHT
 
 gui.set_position(
 nodes.killer,
@@ -738,6 +754,247 @@ layout_killfeed(self)
 end
 end
 
+-- =========================================================
+-- Боевое меню
+-- =========================================================
+
+local function create_menu_button(label, color)
+local button = {}
+
+button.box = make_box(
+vmath.vector3(0, 0, 1),
+vmath.vector3(MENU_BUTTON_WIDTH, MENU_BUTTON_HEIGHT, 0),
+color
+)
+
+button.border = make_box(
+vmath.vector3(0, 0, 1),
+vmath.vector3(MENU_BUTTON_WIDTH + 2, MENU_BUTTON_HEIGHT + 2, 0),
+COLOR_MENU_BORDER
+)
+
+button.label = gui.new_text_node(
+vmath.vector3(0, 0, 1),
+label
+)
+
+gui.set_font(button.label, "default")
+gui.set_color(button.label, COLOR_MENU_TEXT)
+gui.set_scale(button.label, vmath.vector3(0.8, 0.8, 1))
+
+button.default_color = color
+
+return button
+end
+
+local function create_battle_menu(self)
+self.menu_overlay = make_box(
+vmath.vector3(0, 0, 1),
+vmath.vector3(100, 100, 0),
+COLOR_MENU_OVERLAY
+)
+
+self.menu_panel_border = make_box(
+vmath.vector3(0, 0, 1),
+vmath.vector3(MENU_PANEL_WIDTH + 4, MENU_PANEL_HEIGHT + 4, 0),
+COLOR_MENU_BORDER
+)
+
+self.menu_panel = make_box(
+vmath.vector3(0, 0, 1),
+vmath.vector3(MENU_PANEL_WIDTH, MENU_PANEL_HEIGHT, 0),
+COLOR_MENU_PANEL
+)
+
+self.menu_title = gui.new_text_node(
+vmath.vector3(0, 0, 1),
+"BATTLE PAUSED"
+)
+gui.set_font(self.menu_title, "default")
+gui.set_color(self.menu_title, COLOR_MENU_BORDER)
+gui.set_scale(self.menu_title, vmath.vector3(1.0, 1.0, 1))
+
+self.menu_subtitle = gui.new_text_node(
+vmath.vector3(0, 0, 1),
+"SELECT AN ACTION"
+)
+gui.set_font(self.menu_subtitle, "default")
+gui.set_color(self.menu_subtitle, COLOR_MENU_MUTED)
+gui.set_scale(self.menu_subtitle, vmath.vector3(0.58, 0.58, 1))
+
+self.menu_resume_button = create_menu_button(
+"RETURN TO BATTLE",
+COLOR_MENU_BUTTON
+)
+
+self.menu_leave_button = create_menu_button(
+"LEAVE BATTLE",
+COLOR_MENU_DANGER
+)
+
+self.menu_open = false
+self.menu_pressed_button = nil
+
+set_node_enabled(self.menu_overlay, false)
+set_node_enabled(self.menu_panel_border, false)
+set_node_enabled(self.menu_panel, false)
+set_node_enabled(self.menu_title, false)
+set_node_enabled(self.menu_subtitle, false)
+
+set_node_enabled(self.menu_resume_button.box, false)
+set_node_enabled(self.menu_resume_button.border, false)
+set_node_enabled(self.menu_resume_button.label, false)
+
+set_node_enabled(self.menu_leave_button.box, false)
+set_node_enabled(self.menu_leave_button.border, false)
+set_node_enabled(self.menu_leave_button.label, false)
+end
+
+local function layout_battle_menu(self)
+local width = gui.get_width()
+local height = gui.get_height()
+
+gui.set_size(
+self.menu_overlay,
+vmath.vector3(width, height, 0)
+)
+
+local center_x = width * 0.5
+local center_y = height * 0.5
+
+gui.set_position(
+self.menu_overlay,
+vmath.vector3(center_x, center_y, 1)
+)
+
+gui.set_position(
+self.menu_panel_border,
+vmath.vector3(center_x, center_y, 1)
+)
+
+gui.set_position(
+self.menu_panel,
+vmath.vector3(center_x, center_y, 1)
+)
+
+gui.set_position(
+self.menu_title,
+vmath.vector3(center_x, center_y + 76, 1)
+)
+
+gui.set_position(
+self.menu_subtitle,
+vmath.vector3(center_x, center_y + 47, 1)
+)
+
+local resume_y = center_y + 2
+local leave_y = center_y - 57
+
+local function position_button(button, y)
+gui.set_position(
+button.border,
+vmath.vector3(center_x, y, 1)
+)
+
+gui.set_position(
+button.box,
+vmath.vector3(center_x, y, 1)
+)
+
+gui.set_position(
+button.label,
+vmath.vector3(center_x, y, 1)
+)
+end
+
+position_button(self.menu_resume_button, resume_y)
+position_button(self.menu_leave_button, leave_y)
+
+self.menu_screen_width = width
+self.menu_screen_height = height
+end
+
+local function set_battle_menu_visible(self, visible)
+visible = visible == true
+
+if self.menu_open == visible then
+return
+end
+
+self.menu_open = visible
+self.menu_pressed_button = nil
+
+if visible then
+set_scoreboard_visible(self, false)
+end
+
+set_node_enabled(self.menu_overlay, visible)
+set_node_enabled(self.menu_panel_border, visible)
+set_node_enabled(self.menu_panel, visible)
+set_node_enabled(self.menu_title, visible)
+set_node_enabled(self.menu_subtitle, visible)
+
+set_node_enabled(self.menu_resume_button.box, visible)
+set_node_enabled(self.menu_resume_button.border, visible)
+set_node_enabled(self.menu_resume_button.label, visible)
+
+set_node_enabled(self.menu_leave_button.box, visible)
+set_node_enabled(self.menu_leave_button.border, visible)
+set_node_enabled(self.menu_leave_button.label, visible)
+
+if visible then
+layout_battle_menu(self)
+end
+
+-- This pauses only local tank controls. It does not pause
+-- the game loop or network manager.
+msg.post(TANK_SPAWNER_URL, "battle_menu_state", {
+open = visible
+})
+end
+
+local function activate_battle_menu_button(self, button_name)
+if not self.menu_open then
+return
+end
+
+if button_name == "resume" then
+set_battle_menu_visible(self, false)
+
+elseif button_name == "leave" then
+-- Return through the existing proxy-based scene manager.
+-- The network manager handles leaving the battle scene.
+msg.post(SCENE_MANAGER_URL, "return_to_menu")
+end
+end
+
+local function get_menu_button_at(self, x, y)
+if gui.pick_node(self.menu_resume_button.box, x, y) then
+return "resume"
+end
+
+if gui.pick_node(self.menu_leave_button.box, x, y) then
+return "leave"
+end
+
+return nil
+end
+
+local function set_menu_button_hover(self, button_name)
+gui.set_color(
+self.menu_resume_button.box,
+button_name == "resume"
+and COLOR_MENU_BUTTON_HOVER
+or self.menu_resume_button.default_color
+)
+
+gui.set_color(
+self.menu_leave_button.box,
+button_name == "leave"
+and COLOR_MENU_BUTTON_HOVER
+or self.menu_leave_button.default_color
+)
+end
 
 -- =========================================================
 -- Общий layout
@@ -748,21 +1005,21 @@ local screen_width = gui.get_width()
 local screen_height = gui.get_height()
 local center_x = screen_width * 0.5
 
-local reload_y =
-BOTTOM_MARGIN + BAR_HEIGHT * 0.5
-
-local health_y =
-reload_y + BAR_HEIGHT + BAR_GAP
+local reload_y = BOTTOM_MARGIN + BAR_HEIGHT * 0.5
+local health_y = reload_y + BAR_HEIGHT + BAR_GAP
 
 layout_bar(self.health_bar, center_x, health_y)
 layout_bar(self.reload_bar, center_x, reload_y)
 layout_scoreboard(self)
 layout_killfeed(self)
 
+if self.menu_open then
+layout_battle_menu(self)
+end
+
 self.screen_width = screen_width
 self.screen_height = screen_height
 end
-
 
 -- =========================================================
 -- Жизненный цикл GUI
@@ -781,13 +1038,13 @@ gui.set_color(self.reload_bar.fill, COLOR_RELOAD)
 
 create_scoreboard(self)
 create_killfeed(self)
+create_battle_menu(self)
 
 layout(self)
 
 set_bar_progress(self.health_bar, 1)
 set_bar_progress(self.reload_bar, 1)
 
--- Получаем TAB для открытия/закрытия таблицы.
 msg.post(".", "acquire_input_focus")
 end
 
@@ -814,6 +1071,47 @@ end
 end
 
 function on_input(self, action_id, action)
+-- Esc is mapped to the user's existing "pause" action.
+if action_id == hash("pause") and action.pressed then
+set_battle_menu_visible(self, not self.menu_open)
+return true
+end
+
+-- While the battle menu is open, consume clicks so they
+-- cannot activate gameplay input behind the menu.
+if self.menu_open then
+if action_id == hash("touch") then
+if action.pressed then
+self.menu_pressed_button =
+get_menu_button_at(self, action.x, action.y)
+
+set_menu_button_hover(
+self,
+self.menu_pressed_button
+)
+
+elseif action.released then
+local released_button =
+get_menu_button_at(self, action.x, action.y)
+
+local pressed_button = self.menu_pressed_button
+self.menu_pressed_button = nil
+
+set_menu_button_hover(self, nil)
+
+if pressed_button
+and pressed_button == released_button then
+activate_battle_menu_button(
+self,
+pressed_button
+)
+end
+end
+end
+
+return true
+end
+
 if action_id == hash("show_scoreboard") then
 if action.pressed then
 set_scoreboard_visible(self, true)

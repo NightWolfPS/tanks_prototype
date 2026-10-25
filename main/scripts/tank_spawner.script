@@ -1,4 +1,3 @@
-
 -- tank_spawner.script
 -- Local and remote tank spawning, server-authorized respawn,
 -- remote projectiles and damage forwarding.
@@ -67,6 +66,30 @@ local function release_spawn_point(self, index)
         self.reserved_spawn_points[index] = nil
 
         print("[SPAWNER] Released spawn point: " .. tostring(index))
+    end
+end
+
+-- ============================================================
+-- Battle menu state
+-- ============================================================
+
+local function set_battle_menu_state(self, is_open)
+    self.battle_menu_open = is_open == true
+
+    if not self.spawned or not self.tank_ids then
+        return
+    end
+
+    -- tank_ids contains the objects created for the local tank
+    -- collection only. Remote tanks are stored separately.
+    for _, object_id in pairs(self.tank_ids) do
+        if object_id then
+            pcall(function()
+                msg.post(object_id, "battle_menu_state", {
+                    open = self.battle_menu_open
+                })
+            end)
+        end
     end
 end
 
@@ -151,6 +174,9 @@ msg.post(root_id, "set_player_name", {
     hide_name = true
 })
 
+-- Apply the current menu state to newly spawned objects.
+set_battle_menu_state(self, self.battle_menu_open)
+
 local target_url = msg.url("main", root_id, nil)
 
 local ok_message, message_error = pcall(function()
@@ -214,9 +240,6 @@ end
 
 -- ============================================================
 -- Remote tank management
--- These functions run in the gameplay collection, alongside
--- tank_collection_factory. Do not create or delete remote
--- collection instances in network_manager.
 -- ============================================================
 
 local function get_remote_tank(self, player_id)
@@ -224,8 +247,6 @@ return self.remote_tanks[player_id]
 end
 
 local function register_remote_instance(player_id, ids, root_id)
--- The network manager uses these IDs only for comparison with
--- projectile collision IDs. It must not operate on these instances.
 msg.post(NETWORK_MANAGER_URL, "network_remote_instance_registered", {
     player_id = player_id,
     root_id = root_id,
@@ -274,16 +295,10 @@ end
 local function update_remote_tank(self, player_id, state)
 local remote = get_remote_tank(self, player_id)
 
-if not remote then
+if not remote or not remote.root_id then
     return false
 end
 
-if not remote.root_id then
-    return false
-end
-
--- This post is legal because both the spawner and remote tank
--- instances belong to the gameplay collection.
 msg.post(remote.root_id, "network_remote_state", {
     x = state.x,
     y = state.y,
@@ -373,7 +388,6 @@ update_remote_tank(self, player_id, state)
 
 print("[SPAWNER] Created remote tank for " .. player_id)
 
--- Shots received before the tank existed can now be spawned.
 local pending = self.pending_remote_shots[player_id]
 
 if pending then
@@ -389,70 +403,68 @@ end
 
 -- ============================================================
 -- Remote visual projectiles
--- Remote projectiles are visual-only. The server validates hits
--- and sends damage to the affected client separately.
 -- ============================================================
 
-
 local function spawn_remote_shot(self, player_id, shot)
-    local remote = get_remote_tank(self, player_id)
+local remote = get_remote_tank(self, player_id)
 
-    if not remote then
-        local pending = self.pending_remote_shots[player_id]
+if not remote then
+local pending = self.pending_remote_shots[player_id]
 
-        if not pending then
-            pending = {}
-            self.pending_remote_shots[player_id] = pending
-        end
+if not pending then
+    pending = {}
+    self.pending_remote_shots[player_id] = pending
+end
 
-        if #pending < MAX_PENDING_SHOTS then
-            pending[#pending + 1] = shot
-        end
+if #pending < MAX_PENDING_SHOTS then
+    pending[#pending + 1] = shot
+end
 
-        return false
-    end
+return false
+end
 
-    if not remote.turret_id then
-        print("[SPAWNER] WARNING: Remote tank has no turret: "
-        .. tostring(player_id))
-        return false
-    end
+if not remote.turret_id then
+print("[SPAWNER] WARNING: Remote tank has no turret: "
+.. tostring(player_id))
+return false
+end
 
-    -- Prefer the authoritative shot transform sent by the server.
-    -- The server's x/y are already the muzzle position in world space.
-    local x = tonumber(shot.x)
-    local y = tonumber(shot.y)
-    local z = tonumber(shot.z) or 0
-    local angle = tonumber(shot.angle)
+-- Prefer the authoritative shot transform sent by the server.
+local x = tonumber(shot.x)
+local y = tonumber(shot.y)
+local z = tonumber(shot.z) or 0
+local angle = tonumber(shot.angle)
 
-    -- Fallback for older server messages that lack coordinates.
-    if x == nil or y == nil or angle == nil then
-        local turret_id = remote.turret_id
+-- Fallback for older server messages that lack coordinates.
+if x == nil or y == nil or angle == nil then
+local turret_id = remote.turret_id
 
-        local ok_position, turret_position =
-        pcall(go.get_world_position, turret_id)
-        local ok_rotation, turret_rotation =
-        pcall(go.get_world_rotation, turret_id)
+local ok_position, turret_position =
+pcall(go.get_world_position, turret_id)
 
-        if not ok_position or not ok_rotation then
-            print("[SPAWNER] WARNING: Cannot read remote turret transform")
-            return false
-        end
+local ok_rotation, turret_rotation =
+pcall(go.get_world_rotation, turret_id)
 
-        local direction = vmath.rotate(
-        turret_rotation,
-        vmath.vector3(0, 1, 0)
-    )
+if not ok_position or not ok_rotation then
+    print("[SPAWNER] WARNING: Cannot read remote turret transform")
+    return false
+end
 
-    local muzzle_distance = 50
-    local ok_distance, distance = pcall(
-    go.get,
-    "muzzle_distance",
-    msg.url("main", turret_id, nil)
+local direction = vmath.rotate(
+turret_rotation,
+vmath.vector3(0, 1, 0)
+)
+
+local muzzle_distance = 50
+
+local ok_distance, distance = pcall(
+go.get,
+"muzzle_distance",
+msg.url("main", turret_id, nil)
 )
 
 if ok_distance and type(distance) == "number" then
-    muzzle_distance = distance
+muzzle_distance = distance
 end
 
 local fallback_position =
@@ -474,15 +486,12 @@ fallback_direction.x
 end
 
 local spawn_position = vmath.vector3(x, y, z)
--- Серверный angle — направление полёта относительно +X.
--- Игровой снаряд летит вдоль локальной оси +Y,
--- поэтому для его поворота нужно вычесть 90 градусов.
+
+-- Server angle is measured from +X. Projectiles travel along +Y.
 local spawn_rotation = vmath.quat_rotation_z(
 angle - math.pi * 0.5
 )
 
--- These factory components belong to the remote turret instance,
--- but their spawned objects use the supplied world transform.
 local muzzle_url = msg.url(
 "main",
 remote.turret_id,
@@ -548,7 +557,6 @@ print("[SPAWNER] Remote shot spawned for " .. tostring(player_id)
 return true
 end
 
-
 -- ============================================================
 -- Lifecycle
 -- ============================================================
@@ -573,11 +581,11 @@ self.has_spawned_once = false
 self.respawn_requested = false
 self.respawn_authorized = false
 
+self.battle_menu_open = false
+
 self.remote_tanks = {}
 self.pending_remote_shots = {}
 
--- Expose the local helper through self so pending shots can
--- be flushed when a remote tank is created.
 self.spawn_remote_shot = spawn_remote_shot
 
 math.randomseed(os.time())
@@ -607,8 +615,7 @@ return
 end
 end
 
--- Remote tanks must still be updated while the local tank is alive.
--- Local spawn/respawn logic is independent of remote management.
+-- Remote tank updates are independent of local spawning.
 if self.spawned then
 return
 end
@@ -645,6 +652,15 @@ end
 end
 
 function on_message(self, message_id, message, sender)
+-- --------------------------------------------------------
+-- Battle menu
+-- --------------------------------------------------------
+
+if message_id == hash("battle_menu_state") then
+set_battle_menu_state(self, message.open == true)
+return
+end
+
 -- --------------------------------------------------------
 -- Spawn point registration
 -- --------------------------------------------------------
@@ -790,7 +806,8 @@ clear_remote_tanks(self)
 -- --------------------------------------------------------
 
 elseif message_id == hash("network_remote_shot") then
-if message.player_id and message.player_id ~= self.network_player_id then
+if message.player_id
+and message.player_id ~= self.network_player_id then
 spawn_remote_shot(self, message.player_id, message)
 end
 end
