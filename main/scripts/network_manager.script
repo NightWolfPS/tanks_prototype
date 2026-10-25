@@ -1,13 +1,25 @@
+
 -- network_manager.script
--- Multiplayer: remote tanks, projectiles, validated hit reports and respawn.
+-- Multiplayer: match lifecycle, remote tanks, projectiles,
+-- validated hit reports, scoreboard, ping and respawn.
 -- Defold 1.13.1 + extension-websocket
 
 local SERVER_URL = "wss://tank-server-dfii.onrender.com"
 local STATE_SEND_INTERVAL = 0.05
 
--- This script lives in bootstrap.collection. The active gameplay/menu
--- collection is addressed through the socket announced by scene_manager.
 local GROUP_TANK = hash("tank")
+
+-- Forward declarations.
+local remove_remote_player
+local clear_remote_players
+local remember_player
+local create_remote_tank
+local create_remote_shot
+local handle_server_message
+
+-- ---------------------------------------------------------------------------
+-- Scene routing
+-- ---------------------------------------------------------------------------
 
 local function scene_url(self, path)
     if not self.scene_socket or self.scene_socket == "" then
@@ -19,6 +31,7 @@ end
 
 local function post_to_scene(self, path, message_id, payload)
     local url = scene_url(self, path)
+
     if not url then
         return false
     end
@@ -37,9 +50,15 @@ local function log(message)
 end
 
 local function is_number(value)
-    return type(value) == "number" and value == value
-    and value ~= math.huge and value ~= -math.huge
+    return type(value) == "number"
+    and value == value
+    and value ~= math.huge
+    and value ~= -math.huge
 end
+
+-- ---------------------------------------------------------------------------
+-- WebSocket messaging
+-- ---------------------------------------------------------------------------
 
 local function send_json(self, payload)
     if not self.connected or self.connection == nil then
@@ -47,6 +66,7 @@ local function send_json(self, payload)
     end
 
     local ok, encoded = pcall(json.encode, payload)
+
     if not ok then
         log("JSON encode failed: " .. tostring(encoded))
         return false
@@ -66,28 +86,99 @@ local function send_json(self, payload)
     return true
 end
 
+local function send_enter_battle(self)
+    if not self.connected then
+        log("Cannot enter battle: WebSocket is not connected")
+        return false
+    end
+
+    if self.in_battle or self.enter_battle_pending then
+        return true
+    end
+
+    self.enter_battle_pending = true
+
+    if not send_json(self, {
+        type = "enter_battle"
+    }) then
+        self.enter_battle_pending = false
+        return false
+    end
+
+    log("Requested battle entry")
+    return true
+end
+
+local function send_leave_battle(self)
+    if not self.connected then
+        self.in_battle = false
+        self.enter_battle_pending = false
+        return false
+    end
+
+    if not self.in_battle and not self.enter_battle_pending then
+        return false
+    end
+
+    -- Clear local participation immediately. The server confirms the leave
+    -- asynchronously, but this client must stop sending gameplay messages now.
+    self.in_battle = false
+    self.enter_battle_pending = false
+    self.local_state = nil
+    self.state_timer = 0
+
+    send_json(self, {
+        type = "leave_battle"
+    })
+
+    log("Requested leaving battle")
+    return true
+end
+
+local function post_player_ready(self)
+    if not self.in_battle or not self.scene_socket then
+        return
+    end
+
+    if not self.player_id or not is_number(self.spawn_index) then
+        log("Cannot initialize local player: missing player ID or spawn index")
+        return
+    end
+
+    post_to_scene(self, "/tank_spawner#tank_spawner", "network_player_ready", {
+        player_id = self.player_id,
+        spawn_index = self.spawn_index
+    })
+end
+
+-- ---------------------------------------------------------------------------
+-- Remote player states and tank creation
+-- ---------------------------------------------------------------------------
+
 local function post_remote_state(self, player_id, player)
     local instance = self.remote_instances[player_id]
 
     if not instance or not player
-    or not is_number(player.x) or not is_number(player.y) then
+    or not is_number(player.x)
+    or not is_number(player.y) then
         return
     end
 
-    msg.post(instance.root_id, "network_remote_state", {
+    pcall(msg.post, instance.root_id, "network_remote_state", {
         x = player.x,
         y = player.y,
         body_angle = player.body_angle or 0,
         turret_angle = player.turret_angle or 0,
-        state_seq = player.state_seq or 0,
+        state_seq = player.state_seq or 0
     })
 end
 
-local create_remote_shot
-
 local function flush_pending_shots(self, player_id)
     local pending = self.pending_shots[player_id]
-    if not pending or #pending == 0 then return end
+
+    if not pending or #pending == 0 then
+        return
+    end
 
     self.pending_shots[player_id] = nil
 
@@ -96,16 +187,28 @@ local function flush_pending_shots(self, player_id)
     end
 end
 
-local function create_remote_tank(self, player)
-    if not self.scene_socket then return end
-    if not player or type(player.id) ~= "string" then return end
-    if player.id == self.player_id then return end
-
-    if player.life_state == "dead" or player.life_state == "inactive" then
+create_remote_tank = function(self, player)
+    if not self.in_battle or not self.scene_socket then
         return
     end
 
-    if not is_number(player.x) or not is_number(player.y) then return end
+    if not player or type(player.id) ~= "string" then
+        return
+    end
+
+    if player.id == self.player_id then
+        return
+    end
+
+    if player.life_state == "dead"
+    or player.life_state == "inactive" then
+        return
+    end
+
+    -- A remote tank needs a valid server position.
+    if not is_number(player.x) or not is_number(player.y) then
+        return
+    end
 
     if self.remote_instances[player.id] then
         post_remote_state(self, player.id, player)
@@ -113,105 +216,141 @@ local function create_remote_tank(self, player)
     end
 
     local properties = {
-        [hash("/tank")] = { is_local_player = false },
-        [hash("/tank_turret")] = { is_local_player = false }
+        [hash("/tank")] = {
+            is_local_player = false
+        },
+        [hash("/tank_turret")] = {
+            is_local_player = false
+        }
     }
 
     local position = vmath.vector3(player.x, player.y, 0)
     local rotation = vmath.quat_rotation_z(player.body_angle or 0)
 
-    local ok, ids = pcall(function()
-        return collectionfactory.create(
-        scene_url(self, "/tank_spawner#tank_collection_factory"),
-        position, rotation, properties
-    )
+    local factory_url = scene_url(
+    self,
+    "/tank_spawner#tank_collection_factory"
+)
+
+if not factory_url then
+    return
+end
+
+local ok, ids = pcall(function()
+    return collectionfactory.create(
+    factory_url,
+    position,
+    rotation,
+    properties
+)
 end)
 
 if not ok or not ids then
-    log("Failed to create remote tank for " .. player.id .. ": " .. tostring(ids))
-    return
+log(
+"Failed to create remote tank for "
+.. player.id .. ": " .. tostring(ids)
+)
+return
 end
 
 local root_id = ids[hash("/tank")]
 
 if not root_id then
-    log("Remote tank collection missing root '/tank' for " .. player.id)
-    pprint(ids)
-    pcall(go.delete, ids)
-    return
+log("Remote tank collection missing root '/tank' for " .. player.id)
+pprint(ids)
+pcall(go.delete, ids)
+return
 end
 
 self.remote_instances[player.id] = {
-    root_id = root_id,
-    ids = ids
+root_id = root_id,
+ids = ids
 }
 
-msg.post(root_id, "set_player_name", { name = player.id })
+pcall(msg.post, root_id, "set_player_name", {
+name = player.id
+})
 
 log("Created remote tank for " .. player.id)
+
 post_remote_state(self, player.id, player)
 flush_pending_shots(self, player.id)
 end
 
-local function remember_player(self, player)
-if type(player) ~= "table" or type(player.id) ~= "string" then return end
-if player.id == self.player_id then return end
+remember_player = function(self, player)
+if not self.in_battle then
+return
+end
 
-if player.life_state == "dead" or player.life_state == "inactive" then
-    remove_remote_player(self, player.id)
-    return
+if type(player) ~= "table"
+or type(player.id) ~= "string" then
+return
+end
+
+if player.id == self.player_id then
+return
+end
+
+if player.life_state == "dead"
+or player.life_state == "inactive" then
+remove_remote_player(self, player.id)
+return
 end
 
 local old = self.remote_players[player.id] or {
-    id = player.id,
-    x = nil,
-    y = nil,
-    body_angle = 0,
-    turret_angle = 0,
-    state_seq = 0
+id = player.id,
+x = nil,
+y = nil,
+body_angle = 0,
+turret_angle = 0,
+state_seq = 0
 }
 
 if is_number(player.spawn_index) then
-    old.spawn_index = player.spawn_index
+old.spawn_index = player.spawn_index
 end
 
 if is_number(player.x) and is_number(player.y) then
-    if is_number(player.state_seq) and is_number(old.state_seq)
-    and player.state_seq < old.state_seq then
-        return
-    end
+if is_number(player.state_seq)
+and is_number(old.state_seq)
+and player.state_seq < old.state_seq then
+return
+end
 
-    old.x = player.x
-    old.y = player.y
+old.x = player.x
+old.y = player.y
 
-    if is_number(player.body_angle) then
-        old.body_angle = player.body_angle
-    end
+if is_number(player.body_angle) then
+old.body_angle = player.body_angle
+end
 
-    if is_number(player.turret_angle) then
-        old.turret_angle = player.turret_angle
-    end
+if is_number(player.turret_angle) then
+old.turret_angle = player.turret_angle
+end
 
-    if is_number(player.state_seq) then
-        old.state_seq = player.state_seq
-    end
+if is_number(player.state_seq) then
+old.state_seq = player.state_seq
+end
 end
 
 old.life_state = player.life_state or old.life_state or "alive"
+
 self.remote_players[player.id] = old
 
 if is_number(old.x) and is_number(old.y) then
-    create_remote_tank(self, old)
+create_remote_tank(self, old)
 end
 end
 
-function remove_remote_player(self, player_id)
-if type(player_id) ~= "string" then return end
+remove_remote_player = function(self, player_id)
+if type(player_id) ~= "string" then
+return
+end
 
 local instance = self.remote_instances[player_id]
 
 if instance and instance.root_id then
-    pcall(go.delete, instance.root_id, true)
+pcall(go.delete, instance.root_id, true)
 end
 
 self.remote_instances[player_id] = nil
@@ -221,15 +360,15 @@ self.pending_shots[player_id] = nil
 log("Removed remote tank for " .. player_id)
 end
 
-local function clear_remote_players(self)
+clear_remote_players = function(self)
 local ids = {}
 
 for player_id in pairs(self.remote_instances) do
-    ids[#ids + 1] = player_id
+ids[#ids + 1] = player_id
 end
 
 for _, player_id in ipairs(ids) do
-    remove_remote_player(self, player_id)
+remove_remote_player(self, player_id)
 end
 
 self.remote_players = {}
@@ -238,37 +377,46 @@ self.pending_shots = {}
 end
 
 local function find_remote_player_for_object(self, object_id)
-if not object_id then return nil end
+if not object_id then
+return nil
+end
 
 for player_id, instance in pairs(self.remote_instances) do
-    if instance.root_id == object_id then
-        return player_id
-    end
+if instance.root_id == object_id then
+return player_id
+end
 end
 
 return nil
 end
 
+-- ---------------------------------------------------------------------------
+-- Remote projectile visuals
+-- ---------------------------------------------------------------------------
+
 create_remote_shot = function(self, player_id, shot)
-if not self.scene_socket then return end
+if not self.in_battle or not self.scene_socket then
+return
+end
+
 local instance = self.remote_instances[player_id]
 
 if not instance then
-    local pending = self.pending_shots[player_id] or {}
+local pending = self.pending_shots[player_id] or {}
 
-    if #pending < 8 then
-        pending[#pending + 1] = shot
-        self.pending_shots[player_id] = pending
-    end
+if #pending < 8 then
+pending[#pending + 1] = shot
+self.pending_shots[player_id] = pending
+end
 
-    return
+return
 end
 
 local turret_id = instance.ids[hash("/tank_turret")]
 
 if not turret_id then
-    log("Cannot show shot: remote turret missing for " .. player_id)
-    return
+log("Cannot show shot: remote turret missing for " .. player_id)
+return
 end
 
 local position = vmath.vector3(
@@ -280,92 +428,165 @@ is_number(shot.z) and shot.z or 0.5
 local angle = is_number(shot.angle) and shot.angle or 0
 local rotation = vmath.quat_rotation_z(angle)
 
-local flash_url = msg.url(self.scene_socket, turret_id, hash("muzzle_flash_factory"))
-local ok_flash, flash_id = pcall(factory.create, flash_url, position, rotation)
+local flash_url = msg.url(
+self.scene_socket,
+turret_id,
+hash("muzzle_flash_factory")
+)
+
+local ok_flash, flash_id = pcall(
+factory.create,
+flash_url,
+position,
+rotation
+)
 
 if ok_flash and flash_id then
 pcall(msg.post, flash_id, "play_effect")
 end
 
-local projectile_url = msg.url(self.scene_socket, turret_id, hash("projectile_factory"))
+local projectile_url = msg.url(
+self.scene_socket,
+turret_id,
+hash("projectile_factory")
+)
 
 local ok_projectile, projectile_id = pcall(function()
 return factory.create(projectile_url, position, rotation, {
-    is_visual_only = true,
-    owner_group = GROUP_TANK,
-    owner_id = instance.root_id,
-    shot_id = shot.shot_id or ""
+is_visual_only = true,
+owner_group = GROUP_TANK,
+owner_id = instance.root_id,
+shot_id = shot.shot_id or ""
 })
 end)
 
 if not ok_projectile or not projectile_id then
-log("Remote projectile creation failed: " .. tostring(projectile_id))
-return
+log(
+"Remote projectile creation failed: "
+.. tostring(projectile_id)
+)
 end
 end
 
-local function handle_server_message(self, message)
-if type(message) ~= "table" or type(message.type) ~= "string" then
+-- ---------------------------------------------------------------------------
+-- Server messages
+-- ---------------------------------------------------------------------------
+
+handle_server_message = function(self, message)
+if type(message) ~= "table"
+or type(message.type) ~= "string" then
 log("Ignored malformed server message")
 return
 end
 
 if message.type == "ping" then
-    -- Application-level heartbeat used to calculate RTT in the server scoreboard.
-    if is_number(message.ping_id) then
-        send_json(self, { type = "pong", ping_id = message.ping_id })
-    else
-        log("Ignored ping without a valid ping_id")
-    end
-    return
+if is_number(message.ping_id) then
+send_json(self, {
+type = "pong",
+ping_id = message.ping_id
+})
+else
+log("Ignored ping without a valid ping_id")
+end
+
+return
 
 elseif message.type == "welcome" then
 self.player_id = message.player_id
-self.spawn_index = tonumber(message.spawn_index)
+self.spawn_index = nil
+self.in_battle = false
+self.enter_battle_pending = false
 
-log("Connected as " .. tostring(self.player_id)
-.. ", spawn index " .. tostring(self.spawn_index))
+log("Connected as " .. tostring(self.player_id))
 
-post_to_scene(self, "/tank_spawner#tank_spawner", "network_player_ready", {
-    player_id = self.player_id,
-    spawn_index = self.spawn_index
-})
-
-for _, player in ipairs(message.players or {}) do
-    remember_player(self, player)
+-- Do not create a tank or send client_ready here.
+-- The player is only connected, not yet participating in a match.
+if self.scene_name == "battle" and self.scene_socket then
+send_enter_battle(self)
 end
 
-send_json(self, { type = "client_ready" })
+elseif message.type == "enter_battle_accepted" then
+self.enter_battle_pending = false
+self.in_battle = true
+
+if type(message.player_id) == "string" then
+self.player_id = message.player_id
+end
+
+self.spawn_index = tonumber(message.spawn_index)
+
+log(
+"Entered battle as " .. tostring(self.player_id)
+.. ", spawn index " .. tostring(self.spawn_index)
+)
+
+-- Initialize the local tank only after the server accepts entry.
+post_player_ready(self)
+
+-- The server supplies the current list of existing participants.
+self.remote_players = {}
+self.remote_instances = {}
+self.pending_shots = {}
+
+for _, player in ipairs(message.players or {}) do
+remember_player(self, player)
+end
+
+elseif message.type == "enter_battle_rejected" then
+self.enter_battle_pending = false
+self.in_battle = false
+self.local_state = nil
+self.state_timer = 0
+
+log("Battle entry rejected: " .. tostring(message.reason))
+
+post_to_scene(
+self,
+"/tank_spawner#tank_spawner",
+"network_battle_entry_rejected",
+{
+reason = message.reason or "unknown"
+}
+)
+
+elseif message.type == "leave_battle_accepted" then
+log("Server confirmed leaving battle")
 
 elseif message.type == "ready" then
-log("Server marked client ready")
+-- Compatibility response for the legacy client_ready message.
+log("Server acknowledged readiness")
 
 elseif message.type == "player_joined" then
 remember_player(self, message.player)
 
-elseif message.type == "player_left" or message.type == "player_inactive" then
+elseif message.type == "player_left" then
+remove_remote_player(self, message.player_id)
+
+elseif message.type == "player_inactive" then
 remove_remote_player(self, message.player_id)
 
 elseif message.type == "state" then
 remember_player(self, {
-    id = message.player_id,
-    x = message.x,
-    y = message.y,
-    body_angle = message.body_angle,
-    turret_angle = message.turret_angle,
-    state_seq = message.state_seq,
-    life_state = "alive"
+id = message.player_id,
+x = message.x,
+y = message.y,
+body_angle = message.body_angle,
+turret_angle = message.turret_angle,
+state_seq = message.state_seq,
+life_state = "alive"
 })
 
 elseif message.type == "shot" then
 if type(message.player_id) == "string"
 and message.player_id ~= self.player_id then
-    create_remote_shot(self, message.player_id, message)
+create_remote_shot(self, message.player_id, message)
 end
 
 elseif message.type == "shot_registered" then
-log("Shot accepted: client=" .. tostring(message.client_shot_id)
-.. ", server=" .. tostring(message.shot_id))
+log(
+"Shot accepted: client=" .. tostring(message.client_shot_id)
+.. ", server=" .. tostring(message.shot_id)
+)
 
 elseif message.type == "shot_rejected" then
 log("Shot rejected: " .. tostring(message.reason))
@@ -374,95 +595,142 @@ elseif message.type == "hit_rejected" then
 log("Hit rejected: " .. tostring(message.reason))
 
 elseif message.type == "projectile_hit" then
-log("Hit: " .. tostring(message.player_id)
+log(
+"Hit: " .. tostring(message.player_id)
 .. " -> " .. tostring(message.target_player_id)
 .. ", damage=" .. tostring(message.damage)
-.. ", HP=" .. tostring(message.hp))
+.. ", HP=" .. tostring(message.hp)
+)
 
 if message.target_player_id == self.player_id then
-    post_to_scene(self, "/tank_spawner#tank_spawner", "network_apply_damage", {
-        damage = tonumber(message.damage) or 0,
-        killer_id = message.player_id,
-        hit_x = message.x,
-        hit_y = message.y,
-        effects = message.effects or {},
-        critical = message.effects and message.effects.critical == true
-    })
+post_to_scene(
+self,
+"/tank_spawner#tank_spawner",
+"network_apply_damage",
+{
+damage = tonumber(message.damage) or 0,
+killer_id = message.player_id,
+hit_x = message.x,
+hit_y = message.y,
+effects = message.effects or {},
+critical = message.effects
+and message.effects.critical == true
+}
+)
 end
 
 elseif message.type == "status_damage" then
 if message.target_player_id == self.player_id then
-    post_to_scene(self, "/tank_spawner#tank_spawner", "network_apply_damage", {
-        damage = tonumber(message.damage) or 0,
-        killer_id = message.killer_id or "",
-        effect = message.effect or "burn",
-        status_tick = true
-    })
+post_to_scene(
+self,
+"/tank_spawner#tank_spawner",
+"network_apply_damage",
+{
+damage = tonumber(message.damage) or 0,
+killer_id = message.killer_id or "",
+effect = message.effect or "burn",
+status_tick = true
+}
+)
 end
 
 elseif message.type == "status_effect_expired" then
 if message.target_player_id == self.player_id then
-    post_to_scene(self, "/tank_spawner#tank_spawner", "network_status_expired", {
-        effect = message.effect or ""
-    })
+post_to_scene(
+self,
+"/tank_spawner#tank_spawner",
+"network_status_expired",
+{
+effect = message.effect or ""
+}
+)
 end
 
 elseif message.type == "player_killed" then
-log("Server kill confirmation: "
-.. tostring(message.killer_id) .. " -> "
-.. tostring(message.victim_id))
+log(
+"Server kill confirmation: "
+.. tostring(message.killer_id)
+.. " -> "
+.. tostring(message.victim_id)
+)
 
 elseif message.type == "respawn_accepted" then
 log("Server accepted respawn")
 
-post_to_scene(self, "/tank_spawner#tank_spawner", "network_respawn_accepted", {
-    player_id = message.player_id,
-    spawn_index = tonumber(message.spawn_index)
-})
+post_to_scene(
+self,
+"/tank_spawner#tank_spawner",
+"network_respawn_accepted",
+{
+player_id = message.player_id,
+spawn_index = tonumber(message.spawn_index)
+}
+)
 
 elseif message.type == "respawn_rejected" then
 log("Respawn rejected: " .. tostring(message.reason))
 
-post_to_scene(self, "/tank_spawner#tank_spawner", "network_respawn_rejected", {
-    reason = message.reason
-})
+post_to_scene(
+self,
+"/tank_spawner#tank_spawner",
+"network_respawn_rejected",
+{
+reason = message.reason
+}
+)
 
 elseif message.type == "scoreboard" then
 local players = message.players
 
 if type(players) ~= "table" then
-    log("Ignored malformed scoreboard")
-    return
+log("Ignored malformed scoreboard")
+return
 end
 
+-- Do not render match statistics in the menu.
+if not self.in_battle or not self.scene_socket then
+return
+end
+
+local count = math.min(#players, 6)
+
 post_to_scene(self, "/tank_hud#gui", "server_scoreboard_reset", {
-    count = math.min(#players, 6)
+count = count
 })
 
 for index, player in ipairs(players) do
-    if index > 6 then break end
+if index > 6 then
+break
+end
 
-    if type(player) == "table" and type(player.id) == "string" then
-        post_to_scene(self, "/tank_hud#gui", "server_scoreboard_row", {
-            row = index - 1,
-            player_id = player.id,
-            name = player.id,
-            points = tonumber(player.score) or 0,
-            damage = tonumber(player.damage_dealt) or 0,
-            ping = tonumber(player.ping) or 0,
-            kills = tonumber(player.kills) or 0,
-            deaths = tonumber(player.deaths) or 0,
-            is_local = player.id == self.player_id
-        })
-    end
+if type(player) == "table"
+and type(player.id) == "string" then
+post_to_scene(
+self,
+"/tank_hud#gui",
+"server_scoreboard_row",
+{
+row = index - 1,
+player_id = player.id,
+name = player.id,
+points = tonumber(player.score) or 0,
+damage = tonumber(player.damage_dealt) or 0,
+ping = tonumber(player.ping) or 0,
+kills = tonumber(player.kills) or 0,
+deaths = tonumber(player.deaths) or 0,
+is_local = player.id == self.player_id
+}
+)
+end
 end
 
 elseif message.type == "kill_feed" then
-if type(message.victim_id) == "string" then
-    post_to_scene(self, "/tank_hud#gui", "killfeed_event", {
-        killer_id = message.killer_id or "WORLD",
-        victim_id = message.victim_id
-    })
+if self.in_battle and self.scene_socket
+and type(message.victim_id) == "string" then
+post_to_scene(self, "/tank_hud#gui", "killfeed_event", {
+killer_id = message.killer_id or "WORLD",
+victim_id = message.victim_id
+})
 end
 
 elseif message.type == "error" then
@@ -476,45 +744,73 @@ log("Unknown server event: " .. tostring(message.type))
 end
 end
 
+-- ---------------------------------------------------------------------------
+-- WebSocket callback
+-- ---------------------------------------------------------------------------
+
 local function websocket_callback(self, connection, data)
 if data.event == websocket.EVENT_CONNECTED then
 self.connection = connection
 self.connected = true
+
 log("Connected to " .. SERVER_URL)
+
+-- If the battle scene loaded while connecting, request entry now.
+if self.scene_name == "battle" and self.scene_socket then
+send_enter_battle(self)
+end
 
 elseif data.event == websocket.EVENT_DISCONNECTED then
 if self.connection == connection then
-    self.connection = nil
+self.connection = nil
 end
 
 self.connected = false
 self.player_id = nil
 self.spawn_index = nil
 self.local_state = nil
+self.in_battle = false
+self.enter_battle_pending = false
+self.state_timer = 0
 
 clear_remote_players(self)
-post_to_scene(self, "/tank_spawner#tank_spawner", "network_disconnected")
 
-log("Disconnected: " .. tostring(data.code or data.message or "no reason"))
+post_to_scene(
+self,
+"/tank_spawner#tank_spawner",
+"network_disconnected"
+)
+
+log(
+"Disconnected: "
+.. tostring(data.code or data.message or "no reason")
+)
 
 elseif data.event == websocket.EVENT_ERROR then
 log("WebSocket error: " .. tostring(data.message))
 
 if data.handshake_response then
-    log("Handshake status: " .. tostring(data.handshake_response.status))
+log(
+"Handshake status: "
+.. tostring(data.handshake_response.status)
+)
 end
 
 elseif data.event == websocket.EVENT_MESSAGE then
 local ok, decoded = pcall(json.decode, data.message)
 
 if not ok then
-    log("JSON decode failed: " .. tostring(decoded))
-    return
+log("JSON decode failed: " .. tostring(decoded))
+return
 end
 
 handle_server_message(self, decoded)
 end
 end
+
+-- ---------------------------------------------------------------------------
+-- Defold lifecycle
+-- ---------------------------------------------------------------------------
 
 function init(self)
 self.scene_socket = nil
@@ -522,8 +818,12 @@ self.scene_name = "none"
 
 self.connection = nil
 self.connected = false
+
 self.player_id = nil
 self.spawn_index = nil
+
+self.in_battle = false
+self.enter_battle_pending = false
 
 self.remote_players = {}
 self.remote_instances = {}
@@ -540,10 +840,18 @@ timeout = 3000
 end
 
 function update(self, dt)
-if not self.connected or self.local_state == nil then return end
+if not self.connected
+or not self.in_battle
+or self.scene_name ~= "battle"
+or self.local_state == nil then
+return
+end
 
 self.state_timer = self.state_timer + dt
-if self.state_timer < STATE_SEND_INTERVAL then return end
+
+if self.state_timer < STATE_SEND_INTERVAL then
+return
+end
 
 self.state_timer = self.state_timer - STATE_SEND_INTERVAL
 
@@ -558,115 +866,156 @@ end
 
 function on_message(self, message_id, message, sender)
 if message_id == hash("network_scene_changed") then
-    local new_socket = nil
-    local new_scene_name = message.scene or "none"
+local new_scene_name = message.scene or "none"
+local new_socket = nil
 
-    -- Tank spawner and HUD exist only in the battle collection. Menu/garage
-    -- scenes must not be treated as gameplay routes.
-    if new_scene_name == "battle"
-    and type(message.socket) == "string"
-    and message.socket ~= "" then
-        new_socket = message.socket
-    end
+-- The battle route exists only when the active collection is the
+-- gameplay collection. Menus and garages do not participate in matches.
+if new_scene_name == "battle"
+and type(message.socket) == "string"
+and message.socket ~= "" then
+new_socket = message.socket
+end
 
-    local socket_changed = self.scene_socket ~= new_socket
-    self.scene_name = new_scene_name
-    self.scene_socket = new_socket
+local was_battle_scene =
+self.scene_name == "battle"
+and self.scene_socket ~= nil
 
-    if socket_changed then
-        -- Proxy unload removes its objects. Drop stale instance URLs but keep
-        -- the last known remote-player states for the next gameplay scene.
-        self.remote_instances = {}
-        self.pending_shots = {}
+local is_battle_scene =
+new_scene_name == "battle"
+and new_socket ~= nil
 
-        if not self.scene_socket then
-            self.local_state = nil
-            self.state_timer = 0
-        else
-            if self.player_id then
-                post_to_scene(self, "/tank_spawner#tank_spawner", "network_player_ready", {
-                    player_id = self.player_id,
-                    spawn_index = self.spawn_index
-                })
-            end
+local socket_changed = self.scene_socket ~= new_socket
+local scene_changed = self.scene_name ~= new_scene_name
 
-            for _, player in pairs(self.remote_players) do
-                create_remote_tank(self, player)
-            end
-        end
-    end
+if was_battle_scene and
+(not is_battle_scene or socket_changed) then
+send_leave_battle(self)
+clear_remote_players(self)
+end
 
-    log("Active scene route: " .. tostring(self.scene_name)
-        .. ", socket: " .. tostring(self.scene_socket))
-    return
+self.scene_name = new_scene_name
+self.scene_socket = new_socket
+
+if socket_changed or scene_changed then
+self.local_state = nil
+self.state_timer = 0
+end
+
+if is_battle_scene then
+if socket_changed then
+-- The old collection has been unloaded. Clear stale instance
+-- IDs before creating tanks in the new collection.
+clear_remote_players(self)
+end
+
+if self.connected then
+send_enter_battle(self)
+end
+else
+self.local_state = nil
+self.state_timer = 0
+end
+
+log(
+"Active scene route: " .. tostring(self.scene_name)
+.. ", socket: " .. tostring(self.scene_socket)
+)
+
+return
 end
 
 if message_id == hash("network_set_state") then
+if not self.in_battle or self.scene_name ~= "battle" then
+return
+end
+
 self.local_state = {
-    x = message.x or 0,
-    y = message.y or 0,
-    body_angle = message.body_angle or 0,
-    turret_angle = message.turret_angle or 0
+x = message.x or 0,
+y = message.y or 0,
+body_angle = message.body_angle or 0,
+turret_angle = message.turret_angle or 0
 }
 
 elseif message_id == hash("network_player_inactive") then
-if self.connected then
-    send_json(self, { type = "player_inactive" })
+if self.connected and self.in_battle then
+send_json(self, {
+type = "player_inactive"
+})
 end
 
 self.local_state = nil
 self.state_timer = 0
 
 elseif message_id == hash("network_request_respawn") then
-if self.connected then
-    send_json(self, { type = "player_respawn" })
+if self.connected and self.in_battle then
+send_json(self, {
+type = "player_respawn"
+})
 end
 
 elseif message_id == hash("network_send_shot") then
+if not self.connected or not self.in_battle then
+return
+end
+
 send_json(self, {
-    type = "shot",
-    x = message.x or 0,
-    y = message.y or 0,
-    z = message.z or 0.5,
-    angle = message.angle or 0,
-    shot_id = message.shot_id or ""
+type = "shot",
+x = message.x or 0,
+y = message.y or 0,
+z = message.z or 0.5,
+angle = message.angle or 0,
+shot_id = message.shot_id or ""
 })
 
 elseif message_id == hash("network_player_killed") then
 -- The server does not trust killer_id from the client.
--- Kill credit is decided from a registered projectile hit.
+-- Kill credit is decided from registered projectile hits.
+if self.connected and self.in_battle then
 send_json(self, {
-    type = "player_killed",
-    killer_id = type(message.killer_id) == "string"
-    and message.killer_id or ""
+type = "player_killed",
+killer_id = type(message.killer_id) == "string"
+and message.killer_id or ""
 })
+end
 
 elseif message_id == hash("network_send_hit") then
+if not self.connected or not self.in_battle then
+return
+end
+
 local target_player_id =
 find_remote_player_for_object(self, message.target_gameobject_id)
 
 if not target_player_id then
-    log("Hit not sent: target is not a registered remote player")
-    return
+log("Hit not sent: target is not a registered remote player")
+return
 end
 
 send_json(self, {
-    type = "projectile_hit",
-    target_player_id = target_player_id,
-    damage = message.damage or 0,
-    x = message.x or 0,
-    y = message.y or 0,
-    shot_id = message.shot_id or ""
+type = "projectile_hit",
+target_player_id = target_player_id,
+damage = message.damage or 0,
+x = message.x or 0,
+y = message.y or 0,
+shot_id = message.shot_id or ""
 })
 
 elseif message_id == hash("network_disconnect") then
+if self.in_battle or self.enter_battle_pending then
+send_leave_battle(self)
+end
+
 if self.connection ~= nil then
-    websocket.disconnect(self.connection)
-    self.connection = nil
+websocket.disconnect(self.connection)
+self.connection = nil
 end
 
 self.connected = false
+self.in_battle = false
+self.enter_battle_pending = false
 self.local_state = nil
+self.state_timer = 0
 end
 end
 
