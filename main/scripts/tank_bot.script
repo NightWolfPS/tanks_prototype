@@ -38,7 +38,7 @@ go.property("collision_probe_width", 20)
 
 
 local BOT_SPAWNER_URL =
-msg.url("main:/bot_spawner#bot_spawner")
+msg.url("battle_proxy:/bot_spawner#bot_spawner")
 
 local GROUP_WORLD = hash("world")
 local GROUP_TANK = hash("tank")

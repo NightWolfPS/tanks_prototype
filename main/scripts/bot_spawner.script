@@ -6,10 +6,10 @@ go.property("spawn_interval", 1.5)
 go.property("respawn_delay", 1.5)
 
 local FACTORY_URL =
-msg.url("main:/bot_spawner#bot_collection_factory")
+msg.url("battle_proxy:/bot_spawner#bot_collection_factory")
 
 local TANK_SPAWNER_URL =
-msg.url("main:/tank_spawner#tank_spawner")
+msg.url("battle_proxy:/tank_spawner#tank_spawner")
 
 local HUD_URL = msg.url("main:/tank_hud#gui")
 

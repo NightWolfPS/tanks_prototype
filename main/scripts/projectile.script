@@ -14,7 +14,7 @@ local GROUP_WORLD = hash("world")
 local GROUP_TANK = hash("tank")
 local GROUP_BOT = hash("bot")
 
-local NETWORK_URL = msg.url("main:/network_manager#network_manager")
+local NETWORK_URL = msg.url("bootstrap:/network_manager#network_manager")
 
 local function spawn_impact(self, position)
     local ok, result = pcall(function()

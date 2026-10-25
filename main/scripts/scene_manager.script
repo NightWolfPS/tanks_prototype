@@ -8,146 +8,150 @@ local MENU_PROXY = "#main_menu_proxy"
 local BATTLE_PROXY = "#battle_proxy"
 local GARAGE_PROXY = "#garage_proxy"
 
-local NETWORK_MANAGER_URL =
-msg.url("bootstrap:/network_manager#network_manager")
+local NETWORK_MANAGER_URL = msg.url("bootstrap:/network_manager#network_manager")
 
 local SCENES = {
-	main_menu = {
-		proxy = MENU_PROXY,
-		socket = "main_menu_proxy"
-	},
-	battle = {
-		proxy = BATTLE_PROXY,
-		socket = "battle_proxy"
-	},
-	garage = {
-		proxy = GARAGE_PROXY,
-		socket = "garage_proxy"
-	}
+    main_menu = {
+        proxy = MENU_PROXY,
+        socket = "main_menu"
+    },
+    battle = {
+        proxy = BATTLE_PROXY,
+        socket = "main"
+    },
+    garage = {
+        proxy = GARAGE_PROXY,
+        socket = "garage"
+    }
 }
 
 local function log(message)
-	print("[SCENE MANAGER] " .. tostring(message))
+    print("[SCENE MANAGER] " .. tostring(message))
 end
 
-local function notify_network(self, scene_name, socket_name)
-	msg.post(NETWORK_MANAGER_URL, "network_scene_changed", {
-		scene = scene_name or "none",
-		socket = socket_name or ""
-	})
+local function notify_network(scene_name, socket_name)
+    msg.post(NETWORK_MANAGER_URL, "network_scene_changed", {
+        scene = scene_name or "none",
+        socket = socket_name or ""
+    })
 
-	log("Network scene updated: " .. tostring(scene_name))
+    log("Network scene updated: " .. tostring(scene_name or "none")
+    .. ", socket: " .. tostring(socket_name or ""))
+end
+
+local function load_target_proxy(self)
+    if not self.target_proxy then
+        log("No target proxy set; transition cancelled")
+        self.transitioning = false
+        notify_network("none", "")
+        return
+    end
+
+    log("Loading scene " .. tostring(self.target_scene)
+    .. " through " .. tostring(self.target_proxy))
+
+    msg.post(self.target_proxy, "load")
 end
 
 local function load_scene(self, scene_name)
-	local target = SCENES[scene_name]
+    local target = SCENES[scene_name]
 
-	if not target then
-		log("Unknown scene: " .. tostring(scene_name))
-		return
-	end
+    if not target then
+        log("Unknown scene: " .. tostring(scene_name))
+        return
+    end
 
-	if scene_name == "garage" and not self.garage_available then
-		log("Garage proxy is not configured yet")
-		return
-	end
+    if scene_name == "garage" and not self.garage_available then
+        log("Garage proxy is not configured yet")
+        return
+    end
 
-	if self.active_scene == scene_name and not self.transitioning then
-		log("Scene is already active: " .. scene_name)
-		return
-	end
+    if self.transitioning then
+        log("Scene transition already in progress")
+        return
+    end
 
-	if self.transitioning then
-		log("Scene transition already in progress")
-		return
-	end
+    if self.active_scene == scene_name then
+        log("Scene is already active: " .. scene_name)
+        return
+    end
 
-	self.transitioning = true
-	self.target_scene = scene_name
-	self.target_proxy = target.proxy
-	self.target_socket = target.socket
+    self.transitioning = true
+    self.target_scene = scene_name
+    self.target_proxy = target.proxy
+    self.target_socket = target.socket
 
-	-- Prevent messages from being routed into the scene being unloaded.
-	notify_network(self, "none", "")
+    notify_network("none", "")
 
-	if self.active_proxy then
-		log("Disabling current scene: " .. tostring(self.active_scene))
-		msg.post(self.active_proxy, "disable")
-	else
-		log("Loading scene: " .. scene_name)
-		msg.post(self.target_proxy, "load")
-	end
+    if self.active_proxy then
+        log("Unloading current scene " .. tostring(self.active_scene)
+        .. " through " .. tostring(self.active_proxy))
+
+        msg.post(self.active_proxy, "unload")
+    else
+        load_target_proxy(self)
+    end
 end
+
 
 function init(self)
-	self.active_scene = nil
-	self.active_proxy = nil
+    log("init entered")
 
-	self.target_scene = "main_menu"
-	self.target_proxy = MENU_PROXY
-	self.target_socket = "main_menu_proxy"
+    self.active_scene = nil
+    self.active_proxy = nil
+    self.target_scene = "main_menu"
+    self.target_proxy = MENU_PROXY
+    self.target_socket = SCENES.main_menu.socket
+    self.transitioning = true
 
-	self.transitioning = true
+    self.garage_available = false
 
-	-- Keep false until garage.collection is created and assigned
-	-- to the garage_proxy component in bootstrap.collection.
-	self.garage_available = false
+    -- IMPORTANT:
+    -- The Game Object holding Collection Proxies must acquire input focus.
+    -- This allows input to reach GUI scripts in proxy-loaded collections.
+    msg.post(".", "acquire_input_focus")
+    log("Scene manager acquired input focus for collection proxies")
 
-	notify_network(self, "none", "")
-
-	log("Loading main menu")
-	msg.post(self.target_proxy, "load")
+    notify_network("none", "")
+    load_target_proxy(self)
 end
 
+
 function on_message(self, message_id, message, sender)
-	if message_id == hash("open_battle") then
-		load_scene(self, "battle")
-		return
+    if message_id == hash("open_battle") then
+        load_scene(self, "battle")
+        return
+    elseif message_id == hash("open_garage") then
+        load_scene(self, "garage")
+        return
+    elseif message_id == hash("return_to_menu") then
+        load_scene(self, "main_menu")
+        return
+    end
 
-	elseif message_id == hash("open_garage") then
-		load_scene(self, "garage")
-		return
+    if message_id == hash("proxy_loaded") then
+        log("proxy_loaded from " .. tostring(sender)
+        .. "; initializing and enabling " .. tostring(self.target_scene))
 
-	elseif message_id == hash("return_to_menu") then
-		load_scene(self, "main_menu")
-		return
-	end
+        -- Initialize and enable the loaded collection.
+        msg.post(sender, "init")
+        msg.post(sender, "enable")
 
-	if message_id == hash("proxy_loaded") then
-		if self.target_proxy then
-			log("Collection loaded; initializing " .. self.target_scene)
-			msg.post(self.target_proxy, "init")
-		end
+        self.active_scene = self.target_scene
+        self.active_proxy = sender
+        self.transitioning = false
 
-	elseif message_id == hash("proxy_initialized") then
-		if self.target_proxy then
-			msg.post(self.target_proxy, "enable")
-		end
+        notify_network(self.active_scene, self.target_socket)
 
-	elseif message_id == hash("proxy_enabled") then
-		self.active_scene = self.target_scene
-		self.active_proxy = self.target_proxy
-		self.transitioning = false
+        log("Scene activation requested: " .. tostring(self.active_scene)
+        .. ", socket: " .. tostring(self.target_socket))
 
-		notify_network(self, self.active_scene, self.target_socket)
+    elseif message_id == hash("proxy_unloaded") then
+        log("proxy_unloaded from " .. tostring(sender))
 
-		log("Active scene: " .. tostring(self.active_scene)
-		.. ", socket: " .. tostring(self.target_socket))
+        self.active_scene = nil
+        self.active_proxy = nil
 
-	elseif message_id == hash("proxy_disabled") then
-		if self.active_proxy then
-			msg.post(self.active_proxy, "unload")
-		end
-
-	elseif message_id == hash("proxy_unloaded") then
-		self.active_scene = nil
-		self.active_proxy = nil
-
-		if self.target_proxy then
-			log("Loading next scene: " .. tostring(self.target_scene))
-			msg.post(self.target_proxy, "load")
-		else
-			self.transitioning = false
-		end
-	end
+        load_target_proxy(self)
+    end
 end

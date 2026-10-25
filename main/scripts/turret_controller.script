@@ -7,7 +7,7 @@ go.property("fire_cooldown", 0.5)
 go.property("muzzle_distance", 50)
 go.property("is_local_player", true)
 
-local NETWORK_URL = msg.url("main:/network_manager#network_manager")
+local NETWORK_URL = msg.url("bootstrap:/network_manager#network_manager")
 local RELOAD_HUD_URL = msg.url("main:/tank_hud#gui")
 
 local REMOTE_INTERPOLATION_SPEED = 16

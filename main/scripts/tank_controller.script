@@ -9,7 +9,7 @@ go.property("is_local_player", true)
 
 local TANK_SPAWNER_URL = msg.url("main:/tank_spawner#tank_spawner")
 local BOT_SPAWNER_URL = msg.url("main:/bot_spawner#bot_spawner")
-local NETWORK_URL = msg.url("main:/network_manager#network_manager")
+local NETWORK_URL = msg.url("bootstrap:/network_manager#network_manager")
 local HUD_URL = msg.url("main:/tank_hud#gui")
 
 local GROUP_TANK = hash("tank")

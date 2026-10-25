@@ -4,9 +4,11 @@
 
 go.property("spawn_delay", 0.5)
 
+
 local FACTORY_URL = msg.url("main:/tank_spawner#tank_collection_factory")
 local CAMERA_URL = msg.url("main:/camera")
-local NETWORK_MANAGER_URL = msg.url("main:/network_manager#network_manager")
+local NETWORK_MANAGER_URL = msg.url("bootstrap:/network_manager#network_manager")
+
 local TANK_ROOT_ID = hash("/tank")
 local REGISTRATION_WAIT = 0.25
 

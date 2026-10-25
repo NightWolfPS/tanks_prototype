@@ -1,6 +1,7 @@
 
 -- spawn_point.script
--- Регистрирует точку появления у спавнеров игрока и ботов.
+-- Registers a spawn point with the player and bot spawners.
+-- Defold 1.13.1
 
 local TANK_SPAWNER_URL = msg.url("main:/tank_spawner#tank_spawner")
 local BOT_SPAWNER_URL = msg.url("main:/bot_spawner#bot_spawner")
@@ -18,4 +19,5 @@ function init(self)
 	msg.post(BOT_SPAWNER_URL, "register_spawn_point", data)
 
 	print("[SPAWN POINT] Registered: " .. tostring(msg.url()))
+	print("[SPAWN POINT] Position: " .. tostring(position))
 end
