@@ -1,16 +1,25 @@
+
 -- tank_spawner.script
--- Local tank spawning, server-authorized respawn and damage forwarding.
+-- Local and remote tank spawning, server-authorized respawn,
+-- remote projectiles and damage forwarding.
 -- Defold 1.13.1
 
 go.property("spawn_delay", 0.5)
-
 
 local FACTORY_URL = msg.url("main:/tank_spawner#tank_collection_factory")
 local CAMERA_URL = msg.url("main:/camera")
 local NETWORK_MANAGER_URL = msg.url("bootstrap:/network_manager#network_manager")
 
 local TANK_ROOT_ID = hash("/tank")
+local TANK_TURRET_ID = hash("/tank_turret")
 local REGISTRATION_WAIT = 0.25
+local MAX_PENDING_SHOTS = 8
+
+local GROUP_TANK = hash("tank")
+
+-- ============================================================
+-- Spawn points
+-- ============================================================
 
 local function reserve_spawn_point(self, preferred_index)
     if not self.spawn_registration_complete or #self.spawn_points == 0 then
@@ -21,10 +30,10 @@ local function reserve_spawn_point(self, preferred_index)
     and preferred_index >= 1
     and preferred_index <= #self.spawn_points
     and not self.reserved_spawn_points[preferred_index] then
-
         self.reserved_spawn_points[preferred_index] = true
 
-        print("[SPAWNER] Reserved server-assigned spawn point: " .. preferred_index)
+        print("[SPAWNER] Reserved server-assigned spawn point: "
+        .. preferred_index)
 
         return preferred_index, self.spawn_points[preferred_index]
     end
@@ -37,7 +46,9 @@ local function reserve_spawn_point(self, preferred_index)
         end
     end
 
-    if #available == 0 then return nil, nil end
+    if #available == 0 then
+        return nil, nil
+    end
 
     local selected_index = available[math.random(1, #available)]
     self.reserved_spawn_points[selected_index] = true
@@ -48,13 +59,20 @@ local function reserve_spawn_point(self, preferred_index)
 end
 
 local function release_spawn_point(self, index)
-    if not index then return end
+    if not index then
+        return
+    end
 
     if self.reserved_spawn_points[index] then
         self.reserved_spawn_points[index] = nil
+
         print("[SPAWNER] Released spawn point: " .. tostring(index))
     end
 end
+
+-- ============================================================
+-- Local player tank
+-- ============================================================
 
 local function spawn_tank(self)
     if not self.spawn_registration_complete or not self.network_ready then
@@ -71,7 +89,7 @@ local function spawn_tank(self)
         return false
     end
 
-    -- Server index is zero-based; local spawn point index is one-based.
+    -- Server index is zero-based; local index is one-based.
     local preferred_index = nil
 
     if self.assigned_spawn_index ~= nil then
@@ -115,7 +133,6 @@ local root_id = ids[TANK_ROOT_ID]
 if not root_id then
     print("[SPAWNER] ERROR: Root '/tank' not found")
     pprint(ids)
-    pcall(go.delete, ids)
     release_spawn_point(self, point_index)
     return false
 end
@@ -158,21 +175,24 @@ if not self.tank_root then
     print("[SPAWNER] No tank instance to destroy")
     return false
 end
+
 sound.play("#death")
+
 pcall(function()
     msg.post(CAMERA_URL, "clear_target")
 end)
 
--- The server handles duplicate death/inactive reports safely.
 msg.post(NETWORK_MANAGER_URL, "network_player_inactive")
 
 local old_root = self.tank_root
+
 local ok_delete, delete_error = pcall(function()
     go.delete(old_root, true)
 end)
 
 if not ok_delete then
-    print("[SPAWNER] ERROR: Destroy failed: " .. tostring(delete_error))
+    print("[SPAWNER] ERROR: Destroy failed: "
+    .. tostring(delete_error))
     return false
 end
 
@@ -191,6 +211,347 @@ print("[SPAWNER] Tank destroyed; respawn scheduled")
 
 return true
 end
+
+-- ============================================================
+-- Remote tank management
+-- These functions run in the gameplay collection, alongside
+-- tank_collection_factory. Do not create or delete remote
+-- collection instances in network_manager.
+-- ============================================================
+
+local function get_remote_tank(self, player_id)
+return self.remote_tanks[player_id]
+end
+
+local function register_remote_instance(player_id, ids, root_id)
+-- The network manager uses these IDs only for comparison with
+-- projectile collision IDs. It must not operate on these instances.
+msg.post(NETWORK_MANAGER_URL, "network_remote_instance_registered", {
+    player_id = player_id,
+    root_id = root_id,
+    ids = ids
+})
+end
+
+local function remove_remote_tank(self, player_id)
+local remote = self.remote_tanks[player_id]
+
+if not remote then
+    return
+end
+
+self.remote_tanks[player_id] = nil
+
+if remote.root_id then
+    pcall(function()
+        go.delete(remote.root_id, true)
+    end)
+end
+
+msg.post(NETWORK_MANAGER_URL, "network_remote_instance_unregistered", {
+    player_id = player_id,
+    root_id = remote.root_id,
+    ids = remote.ids
+})
+
+print("[SPAWNER] Removed remote tank: " .. tostring(player_id))
+end
+
+local function clear_remote_tanks(self)
+local player_ids = {}
+
+for player_id in pairs(self.remote_tanks) do
+    player_ids[#player_ids + 1] = player_id
+end
+
+for _, player_id in ipairs(player_ids) do
+    remove_remote_tank(self, player_id)
+end
+
+self.pending_remote_shots = {}
+end
+
+local function update_remote_tank(self, player_id, state)
+local remote = get_remote_tank(self, player_id)
+
+if not remote then
+    return false
+end
+
+if not remote.root_id then
+    return false
+end
+
+-- This post is legal because both the spawner and remote tank
+-- instances belong to the gameplay collection.
+msg.post(remote.root_id, "network_remote_state", {
+    x = state.x,
+    y = state.y,
+    body_angle = state.body_angle or 0,
+    turret_angle = state.turret_angle or 0,
+    state_seq = state.state_seq
+})
+
+return true
+end
+
+local function create_remote_tank(self, player_id, state)
+if type(player_id) ~= "string" or player_id == "" then
+    print("[SPAWNER] ERROR: Invalid remote player ID")
+    return false
+end
+
+if player_id == self.network_player_id then
+    return false
+end
+
+if type(state) ~= "table"
+or type(state.x) ~= "number"
+or type(state.y) ~= "number" then
+    return false
+end
+
+local existing = get_remote_tank(self, player_id)
+
+if existing then
+    update_remote_tank(self, player_id, state)
+    return true
+end
+
+local position = vmath.vector3(state.x, state.y, 0)
+local rotation = vmath.quat()
+
+local properties = {
+    [TANK_ROOT_ID] = {
+        is_local_player = false
+    },
+    [TANK_TURRET_ID] = {
+        is_local_player = false
+    }
+}
+
+local ok_create, ids = pcall(function()
+    return collectionfactory.create(
+    FACTORY_URL,
+    position,
+    rotation,
+    properties
+)
+end)
+
+if not ok_create or not ids then
+print("[SPAWNER] ERROR: Failed to create remote tank for "
+.. player_id .. ": " .. tostring(ids))
+return false
+end
+
+local root_id = ids[TANK_ROOT_ID]
+
+if not root_id then
+print("[SPAWNER] ERROR: Remote tank root '/tank' not found for "
+.. player_id)
+pprint(ids)
+return false
+end
+
+local remote = {
+player_id = player_id,
+root_id = root_id,
+turret_id = ids[TANK_TURRET_ID],
+ids = ids
+}
+
+self.remote_tanks[player_id] = remote
+
+msg.post(root_id, "set_player_name", {
+name = player_id,
+hide_name = false
+})
+
+register_remote_instance(player_id, ids, root_id)
+update_remote_tank(self, player_id, state)
+
+print("[SPAWNER] Created remote tank for " .. player_id)
+
+-- Shots received before the tank existed can now be spawned.
+local pending = self.pending_remote_shots[player_id]
+
+if pending then
+self.pending_remote_shots[player_id] = nil
+
+for _, shot in ipairs(pending) do
+    self:spawn_remote_shot(player_id, shot)
+end
+end
+
+return true
+end
+
+-- ============================================================
+-- Remote visual projectiles
+-- Remote projectiles are visual-only. The server validates hits
+-- and sends damage to the affected client separately.
+-- ============================================================
+
+
+local function spawn_remote_shot(self, player_id, shot)
+    local remote = get_remote_tank(self, player_id)
+
+    if not remote then
+        local pending = self.pending_remote_shots[player_id]
+
+        if not pending then
+            pending = {}
+            self.pending_remote_shots[player_id] = pending
+        end
+
+        if #pending < MAX_PENDING_SHOTS then
+            pending[#pending + 1] = shot
+        end
+
+        return false
+    end
+
+    if not remote.turret_id then
+        print("[SPAWNER] WARNING: Remote tank has no turret: "
+        .. tostring(player_id))
+        return false
+    end
+
+    -- Prefer the authoritative shot transform sent by the server.
+    -- The server's x/y are already the muzzle position in world space.
+    local x = tonumber(shot.x)
+    local y = tonumber(shot.y)
+    local z = tonumber(shot.z) or 0
+    local angle = tonumber(shot.angle)
+
+    -- Fallback for older server messages that lack coordinates.
+    if x == nil or y == nil or angle == nil then
+        local turret_id = remote.turret_id
+
+        local ok_position, turret_position =
+        pcall(go.get_world_position, turret_id)
+        local ok_rotation, turret_rotation =
+        pcall(go.get_world_rotation, turret_id)
+
+        if not ok_position or not ok_rotation then
+            print("[SPAWNER] WARNING: Cannot read remote turret transform")
+            return false
+        end
+
+        local direction = vmath.rotate(
+        turret_rotation,
+        vmath.vector3(0, 1, 0)
+    )
+
+    local muzzle_distance = 50
+    local ok_distance, distance = pcall(
+    go.get,
+    "muzzle_distance",
+    msg.url("main", turret_id, nil)
+)
+
+if ok_distance and type(distance) == "number" then
+    muzzle_distance = distance
+end
+
+local fallback_position =
+turret_position + direction * muzzle_distance
+
+x = fallback_position.x
+y = fallback_position.y
+z = fallback_position.z
+
+local fallback_direction = vmath.rotate(
+turret_rotation,
+vmath.vector3(0, 1, 0)
+)
+
+angle = math.atan2(
+fallback_direction.y,
+fallback_direction.x
+)
+end
+
+local spawn_position = vmath.vector3(x, y, z)
+-- Серверный angle — направление полёта относительно +X.
+-- Игровой снаряд летит вдоль локальной оси +Y,
+-- поэтому для его поворота нужно вычесть 90 градусов.
+local spawn_rotation = vmath.quat_rotation_z(
+angle - math.pi * 0.5
+)
+
+-- These factory components belong to the remote turret instance,
+-- but their spawned objects use the supplied world transform.
+local muzzle_url = msg.url(
+"main",
+remote.turret_id,
+hash("muzzle_flash_factory")
+)
+
+local projectile_url = msg.url(
+"main",
+remote.turret_id,
+hash("projectile_factory")
+)
+
+local ok_flash, flash_id = pcall(function()
+return factory.create(
+muzzle_url,
+spawn_position,
+spawn_rotation
+)
+end)
+
+if ok_flash and flash_id then
+msg.post(flash_id, "play_effect")
+else
+print("[SPAWNER] WARNING: Remote muzzle flash creation failed: "
+.. tostring(flash_id))
+end
+
+local properties = {
+speed = 750,
+lifetime = 1.5,
+damage = 0,
+min_damage = 0,
+owner_group = GROUP_TANK,
+owner_id = remote.root_id,
+is_visual_only = true
+}
+
+local ok_projectile, projectile_id = pcall(function()
+return factory.create(
+projectile_url,
+spawn_position,
+spawn_rotation,
+properties
+)
+end)
+
+if not ok_projectile or not projectile_id then
+print("[SPAWNER] WARNING: Remote projectile creation failed: "
+.. tostring(projectile_id))
+return false
+end
+
+if type(shot.shot_id) == "string" then
+msg.post(projectile_id, "set_shot_id", {
+shot_id = shot.shot_id
+})
+end
+
+print("[SPAWNER] Remote shot spawned for " .. tostring(player_id)
+.. " at (" .. tostring(x) .. ", " .. tostring(y)
+.. "), angle=" .. tostring(angle))
+
+return true
+end
+
+
+-- ============================================================
+-- Lifecycle
+-- ============================================================
 
 function init(self)
 self.spawn_points = {}
@@ -212,6 +573,13 @@ self.has_spawned_once = false
 self.respawn_requested = false
 self.respawn_authorized = false
 
+self.remote_tanks = {}
+self.pending_remote_shots = {}
+
+-- Expose the local helper through self so pending shots can
+-- be flushed when a remote tank is created.
+self.spawn_remote_shot = spawn_remote_shot
+
 math.randomseed(os.time())
 
 print("[DEBUG] Spawner script URL: " .. tostring(msg.url()))
@@ -224,173 +592,224 @@ print("[SPAWNER] Waiting for spawn point registration and network assignment")
 end
 
 function update(self, dt)
-if self.spawned then return end
-
 if not self.spawn_registration_complete then
-    self.registration_timer = self.registration_timer - dt
+self.registration_timer = self.registration_timer - dt
 
-    if self.registration_timer <= 0 then
-        self.spawn_registration_complete = true
+if self.registration_timer <= 0 then
+self.spawn_registration_complete = true
 
-        print("[SPAWNER] Registration finished. Points: "
-        .. #self.spawn_points)
+print("[SPAWNER] Registration finished. Points: "
+.. #self.spawn_points)
 
-        self.timer = self.spawn_delay
-    else
-        return
-    end
+self.timer = self.spawn_delay
+else
+return
+end
 end
 
-if not self.network_ready then return end
+-- Remote tanks must still be updated while the local tank is alive.
+-- Local spawn/respawn logic is independent of remote management.
+if self.spawned then
+return
+end
 
--- After the first spawn, every new tank requires server authorization.
+if not self.network_ready then
+return
+end
+
 if self.has_spawned_once and not self.respawn_authorized then
-    if self.respawn_requested then
-        return
-    end
-
-    self.timer = self.timer - dt
-
-    if self.timer <= 0 then
-        self.respawn_requested = true
-
-        msg.post(NETWORK_MANAGER_URL, "network_request_respawn")
-
-        print("[SPAWNER] Respawn requested from server")
-    end
-
-    return
+if self.respawn_requested then
+return
 end
 
 self.timer = self.timer - dt
 
 if self.timer <= 0 then
-    if not spawn_tank(self) then
-        self.timer = 1
-    end
+self.respawn_requested = true
+
+msg.post(NETWORK_MANAGER_URL, "network_request_respawn")
+
+print("[SPAWNER] Respawn requested from server")
+end
+
+return
+end
+
+self.timer = self.timer - dt
+
+if self.timer <= 0 then
+if not spawn_tank(self) then
+self.timer = 1
+end
 end
 end
 
 function on_message(self, message_id, message, sender)
-if message_id == hash("register_spawn_point") then
-    if message.position and message.rotation then
-        self.spawn_points[#self.spawn_points + 1] = {
-            position = message.position,
-            rotation = message.rotation
-        }
+-- --------------------------------------------------------
+-- Spawn point registration
+-- --------------------------------------------------------
 
-        print("[SPAWNER] Registered spawn point. Total: "
-        .. #self.spawn_points)
-    else
-        print("[SPAWNER] ERROR: Invalid spawn point message")
-    end
+if message_id == hash("register_spawn_point") then
+if message.position and message.rotation then
+self.spawn_points[#self.spawn_points + 1] = {
+position = message.position,
+rotation = message.rotation
+}
+
+print("[SPAWNER] Registered spawn point. Total: "
+.. #self.spawn_points)
+else
+print("[SPAWNER] ERROR: Invalid spawn point message")
+end
 
 elseif message_id == hash("request_spawn_point") then
-    -- Backwards compatibility with the legacy bot_spawner.
-    local point_index, point = reserve_spawn_point(self)
+-- Backwards compatibility with the legacy bot_spawner.
+local point_index, point = reserve_spawn_point(self)
 
-    if point_index and point then
-        msg.post(sender, "spawn_point_assigned", {
-            index = point_index,
-            position = point.position,
-            rotation = point.rotation
-        })
-    else
-        msg.post(sender, "spawn_point_unavailable")
-    end
-
-elseif message_id == hash("network_player_ready") then
-    self.network_ready = true
-    self.network_player_id = message.player_id
-    self.assigned_spawn_index = tonumber(message.spawn_index)
-
-    self.timer = self.spawn_delay
-
-    print("[SPAWNER] Server assignment received. Player: "
-    .. tostring(self.network_player_id)
-    .. ", zero-based spawn index: "
-    .. tostring(self.assigned_spawn_index))
-
-elseif message_id == hash("network_disconnected") then
-    self.network_ready = false
-    self.respawn_requested = false
-
-    print("[SPAWNER] Network disconnected; waiting for server")
-
-elseif message_id == hash("network_respawn_accepted") then
-    if message.player_id ~= self.network_player_id then
-        print("[SPAWNER] Ignored respawn confirmation for another player")
-        return
-    end
-
-    self.respawn_authorized = true
-    self.respawn_requested = false
-    self.timer = 0
-
-    local index = tonumber(message.spawn_index)
-
-    if index ~= nil then
-        self.assigned_spawn_index = index
-    end
-
-    print("[SPAWNER] Server authorized respawn")
-
-elseif message_id == hash("network_respawn_rejected") then
-    self.respawn_requested = false
-    self.respawn_authorized = false
-    self.timer = 0.5
-
-    print("[SPAWNER] Respawn rejected: " .. tostring(message.reason))
-
-elseif message_id == hash("player_destroyed") then
-    if self.spawned and self.tank_root then
-        destroy_tank(self)
-    end
-
-elseif message_id == hash("network_apply_damage") then
-    if self.spawned and self.tank_root then
-        msg.post(self.tank_root, "network_apply_damage", {
-            damage = message.damage,
-            killer_id = message.killer_id,
-            hit_x = message.hit_x,
-            hit_y = message.hit_y,
-            effects = message.effects or {},
-            critical = message.critical == true,
-            effect = message.effect or "",
-            status_tick = message.status_tick == true
-        })
-    else
-        print("[SPAWNER] Ignored network damage: no active local tank")
-    end
-
-elseif message_id == hash("network_status_expired") then
-    if self.spawned and self.tank_root then
-        msg.post(self.tank_root, "network_status_expired", {
-            effect = message.effect or ""
-        })
-    end
-
-elseif message_id == hash("release_spawn_point") then
-    release_spawn_point(self, message.index)
+if point_index and point then
+msg.post(sender, "spawn_point_assigned", {
+index = point_index,
+position = point.position,
+rotation = point.rotation
+})
+else
+msg.post(sender, "spawn_point_unavailable")
+end
 
 elseif message_id == hash("spawn_registration_complete") then
-    self.spawn_registration_complete = true
-    self.timer = self.spawn_delay
+self.spawn_registration_complete = true
+self.timer = self.spawn_delay
 
-    print("[SPAWNER] Spawn point registration complete")
+print("[SPAWNER] Spawn point registration complete")
+
+-- --------------------------------------------------------
+-- Local player network state
+-- --------------------------------------------------------
+
+elseif message_id == hash("network_player_ready") then
+self.network_ready = true
+self.network_player_id = message.player_id
+self.assigned_spawn_index = tonumber(message.spawn_index)
+
+self.timer = self.spawn_delay
+
+print("[SPAWNER] Server assignment received. Player: "
+.. tostring(self.network_player_id)
+.. ", zero-based spawn index: "
+.. tostring(self.assigned_spawn_index))
+
+elseif message_id == hash("network_disconnected") then
+self.network_ready = false
+self.respawn_requested = false
+
+clear_remote_tanks(self)
+
+print("[SPAWNER] Network disconnected; waiting for server")
+
+elseif message_id == hash("network_respawn_accepted") then
+if message.player_id ~= self.network_player_id then
+print("[SPAWNER] Ignored respawn confirmation for another player")
+return
+end
+
+self.respawn_authorized = true
+self.respawn_requested = false
+self.timer = 0
+
+local index = tonumber(message.spawn_index)
+
+if index ~= nil then
+self.assigned_spawn_index = index
+end
+
+print("[SPAWNER] Server authorized respawn")
+
+elseif message_id == hash("network_respawn_rejected") then
+self.respawn_requested = false
+self.respawn_authorized = false
+self.timer = 0.5
+
+print("[SPAWNER] Respawn rejected: " .. tostring(message.reason))
+
+elseif message_id == hash("player_destroyed") then
+if self.spawned and self.tank_root then
+destroy_tank(self)
+end
+
+elseif message_id == hash("network_apply_damage") then
+if self.spawned and self.tank_root then
+msg.post(self.tank_root, "network_apply_damage", {
+damage = message.damage,
+killer_id = message.killer_id,
+hit_x = message.hit_x,
+hit_y = message.hit_y,
+effects = message.effects or {},
+critical = message.critical == true,
+effect = message.effect or "",
+status_tick = message.status_tick == true
+})
+else
+print("[SPAWNER] Ignored network damage: no active local tank")
+end
+
+elseif message_id == hash("network_status_expired") then
+if self.spawned and self.tank_root then
+msg.post(self.tank_root, "network_status_expired", {
+effect = message.effect or ""
+})
+end
+
+elseif message_id == hash("release_spawn_point") then
+release_spawn_point(self, message.index)
+
+-- --------------------------------------------------------
+-- Remote tank create/update/remove
+-- --------------------------------------------------------
+
+elseif message_id == hash("network_remote_player_state") then
+local player_id = message.player_id
+
+if player_id and player_id ~= self.network_player_id then
+if not self.remote_tanks[player_id] then
+create_remote_tank(self, player_id, message)
+else
+update_remote_tank(self, player_id, message)
+end
+end
+
+elseif message_id == hash("network_remote_player_remove") then
+if message.player_id then
+remove_remote_tank(self, message.player_id)
+end
+
+elseif message_id == hash("network_remote_players_clear") then
+clear_remote_tanks(self)
+
+-- --------------------------------------------------------
+-- Remote visual shots
+-- --------------------------------------------------------
+
+elseif message_id == hash("network_remote_shot") then
+if message.player_id and message.player_id ~= self.network_player_id then
+spawn_remote_shot(self, message.player_id, message)
+end
 end
 end
 
 function on_input(self, action_id, action)
 if action_id == hash("kill_tank") and action.pressed then
-    if self.spawned then
-        destroy_tank(self)
-    else
-        print("[SPAWNER] No spawned tank to destroy")
-    end
+if self.spawned then
+destroy_tank(self)
+else
+print("[SPAWNER] No spawned tank to destroy")
+end
 
-    return true
+return true
 end
 
 return false
+end
+
+function final(self)
+clear_remote_tanks(self)
 end
