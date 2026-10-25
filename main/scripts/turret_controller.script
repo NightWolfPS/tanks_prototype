@@ -255,9 +255,16 @@ if not self.is_local_player then
 return false
 end
 
--- Consume all local turret input while the battle menu is open.
+-- While the battle menu is open, block turret controls,
+-- but allow Esc and mouse input to reach the HUD.
 if self.battle_menu_open then
-return true
+    if action_id == hash("z")
+    or action_id == hash("x")
+    or action_id == hash("space") then
+        return true
+    end
+
+    return false
 end
 
 if action_id == hash("z") then

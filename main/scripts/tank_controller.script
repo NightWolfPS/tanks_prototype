@@ -202,10 +202,17 @@ if not self.is_local_player then
 return false
 end
 
--- Consume input while the battle menu is open so the tank
--- cannot react to movement keys during the menu.
+-- While the battle menu is open, block tank movement keys,
+-- but allow Esc and mouse input to reach the HUD.
 if self.battle_menu_open then
-return true
+    if action_id == hash("up")
+    or action_id == hash("down")
+    or action_id == hash("left")
+    or action_id == hash("right") then
+        return true
+    end
+
+    return false
 end
 
 if self.dead then

@@ -1071,52 +1071,56 @@ end
 end
 
 function on_input(self, action_id, action)
--- Esc is mapped to the user's existing "pause" action.
-if action_id == hash("pause") and action.pressed then
-set_battle_menu_visible(self, not self.menu_open)
+    -- Esc: открываем и закрываем меню.
+    -- Обрабатываем и нажатие, и остальные события этого действия.
+    if action_id == hash("pause") then
+        if action.pressed then
+            set_battle_menu_visible(self, not self.menu_open)
+        end
+
+        return true
+    end
+
+    -- Пока меню открыто, не пропускаем ввод к игровым действиям.
+    if self.menu_open then
+        if action_id == hash("touch") then
+            if action.pressed then
+                self.menu_pressed_button =
+                get_menu_button_at(self, action.x, action.y)
+
+                set_menu_button_hover(
+                self,
+                self.menu_pressed_button
+            )
+
+        elseif action.released then
+            local released_button =
+            get_menu_button_at(self, action.x, action.y)
+
+            local pressed_button = self.menu_pressed_button
+            self.menu_pressed_button = nil
+
+            set_menu_button_hover(self, nil)
+
+            if pressed_button ~= nil
+            and pressed_button == released_button then
+                activate_battle_menu_button(
+                self,
+                pressed_button
+            )
+        end
+    end
+end
+
 return true
 end
 
--- While the battle menu is open, consume clicks so they
--- cannot activate gameplay input behind the menu.
-if self.menu_open then
-if action_id == hash("touch") then
-if action.pressed then
-self.menu_pressed_button =
-get_menu_button_at(self, action.x, action.y)
-
-set_menu_button_hover(
-self,
-self.menu_pressed_button
-)
-
-elseif action.released then
-local released_button =
-get_menu_button_at(self, action.x, action.y)
-
-local pressed_button = self.menu_pressed_button
-self.menu_pressed_button = nil
-
-set_menu_button_hover(self, nil)
-
-if pressed_button
-and pressed_button == released_button then
-activate_battle_menu_button(
-self,
-pressed_button
-)
-end
-end
-end
-
-return true
-end
-
+-- Таблица игроков.
 if action_id == hash("show_scoreboard") then
 if action.pressed then
-set_scoreboard_visible(self, true)
+    set_scoreboard_visible(self, true)
 elseif action.released then
-set_scoreboard_visible(self, false)
+    set_scoreboard_visible(self, false)
 end
 
 return true
