@@ -67,6 +67,29 @@ local function post_to_spawner(self, message_id, payload)
 )
 end
 
+local function post_combat_feed(self, payload)
+    if not self.in_battle or not self.scene_socket then
+        return
+    end
+
+    post_to_scene(
+    self,
+    "/tank_hud#gui",
+    "combat_feed_event",
+    payload
+)
+end
+
+local function reset_combat_feed(self)
+if self.scene_socket then
+    post_to_scene(
+    self,
+    "/tank_hud#gui",
+    "combat_feed_reset"
+)
+end
+end
+
 -- ---------------------------------------------------------------------------
 -- WebSocket messaging
 -- ---------------------------------------------------------------------------
@@ -124,6 +147,7 @@ local function send_leave_battle(self)
 if not self.connected then
     self.in_battle = false
     self.enter_battle_pending = false
+    reset_combat_feed(self)
     return false
 end
 
@@ -453,6 +477,7 @@ elseif message.type == "welcome" then
 elseif message.type == "enter_battle_accepted" then
     self.enter_battle_pending = false
     self.in_battle = true
+    reset_combat_feed(self)
 
     if type(message.player_id) == "string" then
         self.player_id = message.player_id
@@ -546,26 +571,152 @@ log(
 .. ", HP=" .. tostring(message.hp)
 )
 
-if message.target_player_id == self.player_id then
+local shooter_id = message.player_id
+local target_id = message.target_player_id
+local damage = math.max(0, tonumber(message.damage) or 0)
+local effects = type(message.effects) == "table"
+and message.effects
+or {}
+
+-- Урон, нанесённый другим игроком.
+if target_id == self.player_id then
 post_to_spawner(self, "network_apply_damage", {
-damage = tonumber(message.damage) or 0,
-killer_id = message.player_id,
-hit_x = message.x,
-hit_y = message.y,
-effects = message.effects or {},
-critical = message.effects
-and message.effects.critical == true
+    damage = damage,
+    killer_id = shooter_id,
+    hit_x = message.x,
+    hit_y = message.y,
+    effects = effects,
+    critical = effects.critical == true
 })
+
+if type(shooter_id) == "string" and shooter_id ~= "" then
+    if damage > 0 then
+        post_combat_feed(self, {
+            kind = "damage_received",
+            damage = damage,
+            player_id = shooter_id
+        })
+    end
+
+    if tonumber(effects.burn_duration)
+    and effects.burn_duration > 0 then
+        post_combat_feed(self, {
+            kind = "effect_received",
+            effect = "burn",
+            player_id = shooter_id
+        })
+    end
+
+    if tonumber(effects.stun_duration)
+    and effects.stun_duration > 0 then
+        post_combat_feed(self, {
+            kind = "effect_received",
+            effect = "stun",
+            player_id = shooter_id
+        })
+    end
+
+    if tonumber(effects.slow_duration)
+    and effects.slow_duration > 0 then
+        post_combat_feed(self, {
+            kind = "effect_received",
+            effect = "slow",
+            player_id = shooter_id
+        })
+    end
+
+    if effects.critical == true then
+        post_combat_feed(self, {
+            kind = "effect_received",
+            effect = "critical",
+            player_id = shooter_id
+        })
+    end
+end
+end
+
+-- Урон, нанесённый нами другому игроку.
+if shooter_id == self.player_id
+and type(target_id) == "string"
+and target_id ~= "" then
+
+if damage > 0 then
+    post_combat_feed(self, {
+        kind = "damage_dealt",
+        damage = damage,
+        player_id = target_id
+    })
+end
+
+if tonumber(effects.burn_duration)
+and effects.burn_duration > 0 then
+    post_combat_feed(self, {
+        kind = "effect_dealt",
+        effect = "burn",
+        player_id = target_id
+    })
+end
+
+if tonumber(effects.stun_duration)
+and effects.stun_duration > 0 then
+    post_combat_feed(self, {
+        kind = "effect_dealt",
+        effect = "stun",
+        player_id = target_id
+    })
+end
+
+if tonumber(effects.slow_duration)
+and effects.slow_duration > 0 then
+    post_combat_feed(self, {
+        kind = "effect_dealt",
+        effect = "slow",
+        player_id = target_id
+    })
+end
+
+if effects.critical == true then
+    post_combat_feed(self, {
+        kind = "effect_dealt",
+        effect = "critical",
+        player_id = target_id
+    })
+end
 end
 
 elseif message.type == "status_damage" then
-if message.target_player_id == self.player_id then
-post_to_spawner(self, "network_apply_damage", {
-damage = tonumber(message.damage) or 0,
-killer_id = message.killer_id or "",
-effect = message.effect or "burn",
-status_tick = true
-})
+local target_id = message.target_player_id
+local owner_id = message.killer_id or ""
+local damage = math.max(0, tonumber(message.damage) or 0)
+
+if target_id == self.player_id then
+    post_to_spawner(self, "network_apply_damage", {
+        damage = damage,
+        killer_id = owner_id,
+        effect = message.effect or "burn",
+        status_tick = true
+    })
+
+    if damage > 0 and owner_id ~= "" then
+        post_combat_feed(self, {
+            kind = "damage_received",
+            damage = damage,
+            player_id = owner_id
+        })
+    end
+end
+
+-- Учитываем периодический урон поджога, нанесённый нами.
+if owner_id == self.player_id
+and type(target_id) == "string"
+and target_id ~= ""
+and damage > 0 then
+
+    post_combat_feed(self, {
+        kind = "damage_dealt",
+        damage = damage,
+        player_id = target_id
+    })
 end
 
 elseif message.type == "status_effect_expired" then

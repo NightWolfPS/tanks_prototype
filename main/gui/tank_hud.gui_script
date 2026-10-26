@@ -21,6 +21,16 @@ local KILLFEED_MARGIN = 12
 local KILLFEED_LIFETIME = 6.0
 local KILLFEED_FONT = "default"
 
+local COMBAT_FEED_MAX_ROWS = 5
+local COMBAT_FEED_ROW_HEIGHT = 22
+local COMBAT_FEED_MARGIN = 12
+local COMBAT_FEED_FONT = "default"
+
+local COLOR_COMBAT_RECEIVED = vmath.vector4(1.0, 0.30, 0.30, 1.0)
+local COLOR_COMBAT_DEALT = vmath.vector4(0.30, 1.0, 0.48, 1.0)
+local COLOR_COMBAT_EFFECT_DEALT = vmath.vector4(1.0, 0.82, 0.20, 1.0)
+local COLOR_COMBAT_EFFECT_RECEIVED = vmath.vector4(0.70, 0.72, 0.76, 1.0)
+
 local COLOR_BACKGROUND = vmath.vector4(0.12, 0.13, 0.14, 0.95)
 local COLOR_RELOAD = vmath.vector4(0.92, 0.68, 0.20, 1.0)
 local COLOR_HEALTH = vmath.vector4(0.26, 0.78, 0.38, 1.0)
@@ -82,10 +92,6 @@ local function create_killfeed_text(position, text, color, scale)
     return node
 end
 
-local function clamp(value, minimum, maximum)
-    return math.max(minimum, math.min(maximum, value))
-end
-
 local function short_id(value, fallback)
     if type(value) ~= "string" or value == "" then
         value = fallback
@@ -99,6 +105,148 @@ local function short_id(value, fallback)
 
     return value
 end
+
+-- =========================================================
+-- Сводка по урону и статус-эффектам
+-- =========================================================
+
+local function create_combat_feed_text(position, text, color)
+    local node = gui.new_text_node(position, text)
+    gui.set_font(node, COMBAT_FEED_FONT)
+    gui.set_color(node, color)
+    gui.set_scale(node, vmath.vector3(0.62, 0.62, 1))
+    gui.set_enabled(node, false)
+    return node
+end
+
+local function create_combat_feed(self)
+    self.combat_feed_entries = {}
+    self.combat_feed_rows = {}
+
+    for row = 1, COMBAT_FEED_MAX_ROWS do
+        self.combat_feed_rows[row] = create_combat_feed_text(
+        vmath.vector3(0, 0, 1),
+        "",
+        COLOR_COMBAT_RECEIVED
+    )
+end
+end
+
+local function format_combat_feed_entry(message)
+local player_id = short_id(message.player_id, "UNKNOWN")
+local kind = message.kind
+
+if kind == "damage_received" then
+    local damage = math.max(0, tonumber(message.damage) or 0)
+    return tostring(damage) .. " damage from " .. player_id,
+    COLOR_COMBAT_RECEIVED
+
+elseif kind == "damage_dealt" then
+    local damage = math.max(0, tonumber(message.damage) or 0)
+    return tostring(damage) .. " damage to " .. player_id,
+    COLOR_COMBAT_DEALT
+end
+
+local effect_names = {
+    burn = "Flame",
+    stun = "Stun",
+    slow = "Slow",
+    critical = "Crit"
+}
+
+local effect_name = effect_names[message.effect]
+
+if not effect_name then
+    return nil, nil
+end
+
+if kind == "effect_dealt" then
+    return effect_name .. " on " .. player_id,
+    COLOR_COMBAT_EFFECT_DEALT
+
+elseif kind == "effect_received" then
+    return effect_name .. " from " .. player_id,
+    COLOR_COMBAT_EFFECT_RECEIVED
+end
+
+return nil, nil
+end
+
+local function layout_combat_feed(self)
+    local width = gui.get_width()
+    local height = gui.get_height()
+
+    local count = math.min(
+    #self.combat_feed_entries,
+    COMBAT_FEED_MAX_ROWS
+)
+
+-- Отступ от правого края экрана.
+local right_margin = 135
+local right_x = width - right_margin
+
+-- Отступ снизу.
+local bottom_y = COMBAT_FEED_MARGIN + 8
+
+for row = 1, COMBAT_FEED_MAX_ROWS do
+    local node = self.combat_feed_rows[row]
+    local entry = self.combat_feed_entries[row]
+    local visible = entry ~= nil
+
+    gui.set_enabled(node, visible)
+
+    if visible then
+        gui.set_text(node, entry.text)
+        gui.set_color(node, entry.color)
+
+        -- Новые события располагаются выше старых.
+        local y = bottom_y
+        + (count - row) * COMBAT_FEED_ROW_HEIGHT
+
+        gui.set_position(
+        node,
+        vmath.vector3(right_x, y, 1)
+    )
+end
+end
+end
+
+local function add_combat_feed_event(self, message)
+if type(message) ~= "table" then
+return
+end
+
+local text, color = format_combat_feed_entry(message)
+
+if not text then
+return
+end
+
+table.insert(self.combat_feed_entries, 1, {
+text = text,
+color = color
+})
+
+while #self.combat_feed_entries > COMBAT_FEED_MAX_ROWS do
+table.remove(self.combat_feed_entries)
+end
+
+layout_combat_feed(self)
+end
+
+local function reset_combat_feed_entries(self)
+self.combat_feed_entries = {}
+
+for _, node in ipairs(self.combat_feed_rows) do
+gui.set_enabled(node, false)
+end
+end
+
+local function clamp(value, minimum, maximum)
+    return math.max(minimum, math.min(maximum, value))
+end
+
+
 
 local function set_node_enabled(node, enabled)
     if node then
@@ -1012,6 +1160,7 @@ layout_bar(self.health_bar, center_x, health_y)
 layout_bar(self.reload_bar, center_x, reload_y)
 layout_scoreboard(self)
 layout_killfeed(self)
+layout_combat_feed(self)
 
 if self.menu_open then
 layout_battle_menu(self)
@@ -1038,6 +1187,7 @@ gui.set_color(self.reload_bar.fill, COLOR_RELOAD)
 
 create_scoreboard(self)
 create_killfeed(self)
+create_combat_feed(self)
 create_battle_menu(self)
 
 layout(self)
@@ -1171,5 +1321,11 @@ self,
 message.killer_id,
 message.victim_id
 )
+
+elseif message_id == hash("combat_feed_event") then
+add_combat_feed_event(self, message)
+
+elseif message_id == hash("combat_feed_reset") then
+reset_combat_feed_entries(self)
 end
 end
