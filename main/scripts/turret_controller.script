@@ -193,8 +193,9 @@ self.turret_left = false
 self.turret_right = false
 self.fire_pressed = false
 
--- Battle menu blocks only local turret controls.
+-- Menus and chat block local turret controls.
 self.battle_menu_open = false
+self.chat_open = false
 
 self.fire_timer = 0
 self.shot_counter = 0
@@ -257,7 +258,7 @@ end
 
 -- While the battle menu is open, block turret controls,
 -- but allow Esc and mouse input to reach the HUD.
-if self.battle_menu_open then
+if self.battle_menu_open or self.chat_open then
     if action_id == hash("z")
     or action_id == hash("x")
     or action_id == hash("space") then
@@ -330,7 +331,7 @@ self.stun_timer = math.max(0, self.stun_timer - dt)
 
 -- Do not rotate or fire while the menu is open.
 -- The reload timer, laser and HUD still update.
-if self.battle_menu_open then
+if self.battle_menu_open or self.chat_open then
 clear_turret_input(self)
 
 if self.fire_timer > 0 then
@@ -388,12 +389,16 @@ function on_message(self, message_id, message, sender)
 if message_id == hash("battle_menu_state") then
 if self.is_local_player then
 self.battle_menu_open = message.open == true
-
-if self.battle_menu_open then
-clear_turret_input(self)
+if self.battle_menu_open then clear_turret_input(self) end
 end
+return
 end
 
+if message_id == hash("chat_state") then
+if self.is_local_player then
+self.chat_open = message.open == true
+if self.chat_open then clear_turret_input(self) end
+end
 return
 end
 

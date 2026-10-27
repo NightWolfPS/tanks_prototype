@@ -661,6 +661,21 @@ set_battle_menu_state(self, message.open == true)
 return
 end
 
+if message_id == hash("chat_state") then
+    if self.spawned and self.tank_ids then
+        for _, object_id in pairs(self.tank_ids) do
+            if object_id then
+                pcall(function()
+                    msg.post(object_id, "chat_state", {
+                        open = message.open == true
+                    })
+                end)
+            end
+        end
+    end
+    return
+end
+
 -- --------------------------------------------------------
 -- Spawn point registration
 -- --------------------------------------------------------

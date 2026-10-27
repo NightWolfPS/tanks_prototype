@@ -165,6 +165,7 @@ self.turn_right = false
 
 -- Battle menu blocks only local player input.
 self.battle_menu_open = false
+self.chat_open = false
 
 self.engine_sound_playing = false
 
@@ -204,7 +205,7 @@ end
 
 -- While the battle menu is open, block tank movement keys,
 -- but allow Esc and mouse input to reach the HUD.
-if self.battle_menu_open then
+if self.battle_menu_open or self.chat_open then
     if action_id == hash("up")
     or action_id == hash("down")
     or action_id == hash("left")
@@ -282,7 +283,7 @@ self.stun_timer = math.max(0, self.stun_timer - dt)
 
 -- Keep local movement stopped while the menu is open.
 -- Do not return here: network state must continue updating.
-if self.battle_menu_open then
+if self.battle_menu_open or self.chat_open then
 clear_movement_input(self)
 send_network_state(self)
 return
@@ -335,12 +336,16 @@ function on_message(self, message_id, message, sender)
 if message_id == hash("battle_menu_state") then
 if self.is_local_player then
 self.battle_menu_open = message.open == true
-
-if self.battle_menu_open then
-clear_movement_input(self)
+if self.battle_menu_open then clear_movement_input(self) end
 end
+return
 end
 
+if message_id == hash("chat_state") then
+if self.is_local_player then
+self.chat_open = message.open == true
+if self.chat_open then clear_movement_input(self) end
+end
 return
 end
 

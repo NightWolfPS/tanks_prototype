@@ -1,6 +1,6 @@
 -- tank_hud.gui_script
 -- HUD здоровья, перезарядки, серверная таблица игроков,
--- Kill Feed и боевое меню.
+-- Kill Feed, боевая сводка, чат и боевое меню.
 -- Defold 1.13.1
 
 local BAR_WIDTH = 280
@@ -11,7 +11,6 @@ local BAR_GAP = 10
 local MAX_PLAYERS = 6
 local SCOREBOARD_WIDTH = 500
 local SCOREBOARD_ROW_HEIGHT = 22
-local SCOREBOARD_MARGIN = 12
 local SCORE_FONT = "default"
 
 local KILLFEED_MAX_ROWS = 5
@@ -47,7 +46,6 @@ local COLOR_KILLER = vmath.vector4(0.40, 0.93, 0.58, 1.0)
 local COLOR_KILLFEED_ARROW = vmath.vector4(0.95, 0.78, 0.38, 1.0)
 local COLOR_VICTIM = vmath.vector4(1.0, 0.42, 0.36, 1.0)
 
--- Battle menu colors
 local COLOR_MENU_OVERLAY = vmath.vector4(0.015, 0.025, 0.03, 0.78)
 local COLOR_MENU_PANEL = vmath.vector4(0.055, 0.075, 0.085, 1.0)
 local COLOR_MENU_BORDER = vmath.vector4(0.91, 0.63, 0.20, 1.0)
@@ -64,6 +62,21 @@ local MENU_BUTTON_HEIGHT = 46
 
 local TANK_SPAWNER_URL = msg.url("main:/tank_spawner#tank_spawner")
 local SCENE_MANAGER_URL = msg.url("bootstrap:/scene_manager#scene_manager")
+local NETWORK_MANAGER_URL = msg.url("bootstrap:/network_manager#network_manager")
+
+-- Чат
+local CHAT_MAX_LENGTH = 120
+local CHAT_MAX_ROWS = 6
+local CHAT_ROW_HEIGHT = 22
+local CHAT_WIDTH = 430
+local CHAT_MARGIN = 18
+local CHAT_HIDE_SECONDS = 8.0
+local CHAT_FONT = "default"
+
+local COLOR_CHAT_BG = vmath.vector4(0.025, 0.035, 0.045, 0.82)
+local COLOR_CHAT_TEXT = vmath.vector4(0.92, 0.94, 0.95, 1.0)
+local COLOR_CHAT_INPUT = vmath.vector4(1.0, 0.83, 0.38, 1.0)
+local COLOR_CHAT_MUTED = vmath.vector4(0.68, 0.72, 0.75, 1.0)
 
 -- =========================================================
 -- Общие GUI-хелперы
@@ -73,6 +86,30 @@ local function make_box(position, size, color)
     local node = gui.new_box_node(position, size)
     gui.set_color(node, color)
     return node
+end
+
+local function set_node_enabled(node, enabled)
+    if node then
+        gui.set_enabled(node, enabled)
+    end
+end
+
+local function clamp(value, minimum, maximum)
+    return math.max(minimum, math.min(maximum, value))
+end
+
+local function short_id(value, fallback)
+    if type(value) ~= "string" or value == "" then
+        value = fallback
+    end
+
+    value = tostring(value or "UNKNOWN")
+
+    if #value > 18 then
+        value = string.sub(value, 1, 15) .. "..."
+    end
+
+    return value
 end
 
 local function create_score_text(position, text, color, scale)
@@ -92,24 +129,6 @@ local function create_killfeed_text(position, text, color, scale)
     return node
 end
 
-local function short_id(value, fallback)
-    if type(value) ~= "string" or value == "" then
-        value = fallback
-    end
-
-    value = tostring(value or "UNKNOWN")
-
-    if #value > 18 then
-        value = string.sub(value, 1, 15) .. "..."
-    end
-
-    return value
-end
-
--- =========================================================
--- Сводка по урону и статус-эффектам
--- =========================================================
-
 local function create_combat_feed_text(position, text, color)
     local node = gui.new_text_node(position, text)
     gui.set_font(node, COMBAT_FEED_FONT)
@@ -118,6 +137,20 @@ local function create_combat_feed_text(position, text, color)
     gui.set_enabled(node, false)
     return node
 end
+
+local function create_chat_text(position, text, color)
+    local node = gui.new_text_node(position, text)
+    gui.set_font(node, CHAT_FONT)
+    gui.set_color(node, color)
+    gui.set_scale(node, vmath.vector3(0.62, 0.62, 1))
+    gui.set_pivot(node, gui.PIVOT_W)
+    gui.set_enabled(node, false)
+    return node
+end
+
+-- =========================================================
+-- Сводка по урону и статус-эффектам
+-- =========================================================
 
 local function create_combat_feed(self)
     self.combat_feed_entries = {}
@@ -173,40 +206,29 @@ return nil, nil
 end
 
 local function layout_combat_feed(self)
-    local width = gui.get_width()
-    local height = gui.get_height()
-
-    local count = math.min(
-    #self.combat_feed_entries,
-    COMBAT_FEED_MAX_ROWS
+local width = gui.get_width()
+local count = math.min(
+#self.combat_feed_entries,
+COMBAT_FEED_MAX_ROWS
 )
 
--- Отступ от правого края экрана.
-local right_margin = 135
-local right_x = width - right_margin
-
--- Отступ снизу.
+local right_x = width - 135
 local bottom_y = COMBAT_FEED_MARGIN + 8
 
 for row = 1, COMBAT_FEED_MAX_ROWS do
-    local node = self.combat_feed_rows[row]
-    local entry = self.combat_feed_entries[row]
-    local visible = entry ~= nil
+local node = self.combat_feed_rows[row]
+local entry = self.combat_feed_entries[row]
+local visible = entry ~= nil
 
-    gui.set_enabled(node, visible)
+gui.set_enabled(node, visible)
 
-    if visible then
-        gui.set_text(node, entry.text)
-        gui.set_color(node, entry.color)
+if visible then
+    gui.set_text(node, entry.text)
+    gui.set_color(node, entry.color)
 
-        -- Новые события располагаются выше старых.
-        local y = bottom_y
-        + (count - row) * COMBAT_FEED_ROW_HEIGHT
+    local y = bottom_y + (count - row) * COMBAT_FEED_ROW_HEIGHT
 
-        gui.set_position(
-        node,
-        vmath.vector3(right_x, y, 1)
-    )
+    gui.set_position(node, vmath.vector3(right_x, y, 1))
 end
 end
 end
@@ -242,29 +264,17 @@ gui.set_enabled(node, false)
 end
 end
 
-local function clamp(value, minimum, maximum)
-    return math.max(minimum, math.min(maximum, value))
-end
-
-
-
-local function set_node_enabled(node, enabled)
-    if node then
-        gui.set_enabled(node, enabled)
-    end
-end
-
 -- =========================================================
 -- Шкалы здоровья и перезарядки
 -- =========================================================
 
 local function create_bar()
-    local bar = {}
+local bar = {}
 
-    bar.background = make_box(
-    vmath.vector3(0, 0, 0),
-    vmath.vector3(BAR_WIDTH, BAR_HEIGHT, 0),
-    COLOR_BACKGROUND
+bar.background = make_box(
+vmath.vector3(0, 0, 0),
+vmath.vector3(BAR_WIDTH, BAR_HEIGHT, 0),
+COLOR_BACKGROUND
 )
 
 bar.fill = make_box(
@@ -314,38 +324,15 @@ local function layout_bar(bar, center_x, center_y)
 local left_x = center_x - BAR_WIDTH * 0.5
 local right_x = center_x + BAR_WIDTH * 0.5
 
-gui.set_position(
-bar.background,
-vmath.vector3(center_x, center_y, 0)
-)
-
-gui.set_position(
-bar.top,
-vmath.vector3(center_x, center_y + BAR_HEIGHT * 0.5, 2)
-)
-
-gui.set_position(
-bar.bottom,
-vmath.vector3(center_x, center_y - BAR_HEIGHT * 0.5, 2)
-)
-
-gui.set_position(
-bar.left,
-vmath.vector3(left_x, center_y, 2)
-)
-
-gui.set_position(
-bar.right,
-vmath.vector3(right_x, center_y, 2)
-)
+gui.set_position(bar.background, vmath.vector3(center_x, center_y, 0))
+gui.set_position(bar.top, vmath.vector3(center_x, center_y + BAR_HEIGHT * 0.5, 2))
+gui.set_position(bar.bottom, vmath.vector3(center_x, center_y - BAR_HEIGHT * 0.5, 2))
+gui.set_position(bar.left, vmath.vector3(left_x, center_y, 2))
+gui.set_position(bar.right, vmath.vector3(right_x, center_y, 2))
 
 for i, tick in ipairs(bar.ticks) do
 local x = left_x + BAR_WIDTH * i / 10
-
-gui.set_position(
-tick,
-vmath.vector3(x, center_y, 2)
-)
+gui.set_position(tick, vmath.vector3(x, center_y, 2))
 end
 
 bar.center_x = center_x
@@ -354,26 +341,22 @@ bar.left_x = left_x
 end
 
 local function set_bar_progress(bar, progress)
-progress = clamp(progress, 0, 1)
+if not bar or not bar.fill or bar.left_x == nil or bar.center_y == nil then
+return
+end
+
+progress = clamp(tonumber(progress) or 0, 0, 1)
 
 local filled_width = BAR_WIDTH * progress
 
 gui.set_size(
 bar.fill,
-vmath.vector3(
-math.max(filled_width, 0.01),
-BAR_HEIGHT - 2,
-0
-)
+vmath.vector3(math.max(filled_width, 0.01), BAR_HEIGHT - 2, 0)
 )
 
 gui.set_position(
 bar.fill,
-vmath.vector3(
-bar.left_x + filled_width * 0.5,
-bar.center_y,
-1
-)
+vmath.vector3(bar.left_x + filled_width * 0.5, bar.center_y, 1)
 )
 
 gui.set_enabled(bar.fill, progress > 0)
@@ -390,100 +373,24 @@ vmath.vector3(SCOREBOARD_WIDTH, 80, 0),
 COLOR_SCORE_BG
 )
 
-self.score_title = create_score_text(
-vmath.vector3(0, 0, 1),
-"DEATHMATCH",
-COLOR_SCORE_HEADER,
-0.72
-)
-
-self.score_header_name = create_score_text(
-vmath.vector3(0, 0, 1),
-"PLAYER ID",
-COLOR_SCORE_HEADER,
-0.58
-)
-
-self.score_header_points = create_score_text(
-vmath.vector3(0, 0, 1),
-"POINTS",
-COLOR_SCORE_HEADER,
-0.58
-)
-
-self.score_header_damage = create_score_text(
-vmath.vector3(0, 0, 1),
-"DMG",
-COLOR_SCORE_HEADER,
-0.58
-)
-
-self.score_header_ping = create_score_text(
-vmath.vector3(0, 0, 1),
-"PING",
-COLOR_SCORE_HEADER,
-0.58
-)
-
-self.score_header_k = create_score_text(
-vmath.vector3(0, 0, 1),
-"K",
-COLOR_SCORE_HEADER,
-0.58
-)
-
-self.score_header_d = create_score_text(
-vmath.vector3(0, 0, 1),
-"D",
-COLOR_SCORE_HEADER,
-0.58
-)
+self.score_title = create_score_text(vmath.vector3(0, 0, 1), "DEATHMATCH", COLOR_SCORE_HEADER, 0.72)
+self.score_header_name = create_score_text(vmath.vector3(0, 0, 1), "PLAYER ID", COLOR_SCORE_HEADER, 0.58)
+self.score_header_points = create_score_text(vmath.vector3(0, 0, 1), "POINTS", COLOR_SCORE_HEADER, 0.58)
+self.score_header_damage = create_score_text(vmath.vector3(0, 0, 1), "DMG", COLOR_SCORE_HEADER, 0.58)
+self.score_header_ping = create_score_text(vmath.vector3(0, 0, 1), "PING", COLOR_SCORE_HEADER, 0.58)
+self.score_header_k = create_score_text(vmath.vector3(0, 0, 1), "K", COLOR_SCORE_HEADER, 0.58)
+self.score_header_d = create_score_text(vmath.vector3(0, 0, 1), "D", COLOR_SCORE_HEADER, 0.58)
 
 self.score_rows = {}
 
 for row = 0, MAX_PLAYERS - 1 do
 self.score_rows[row] = {
-name = create_score_text(
-vmath.vector3(0, 0, 1),
-"",
-COLOR_SCORE_TEXT,
-0.62
-),
-
-points = create_score_text(
-vmath.vector3(0, 0, 1),
-"",
-COLOR_SCORE_TEXT,
-0.62
-),
-
-damage = create_score_text(
-vmath.vector3(0, 0, 1),
-"",
-COLOR_SCORE_TEXT,
-0.62
-),
-
-ping = create_score_text(
-vmath.vector3(0, 0, 1),
-"",
-COLOR_SCORE_TEXT,
-0.62
-),
-
-kills = create_score_text(
-vmath.vector3(0, 0, 1),
-"",
-COLOR_SCORE_TEXT,
-0.62
-),
-
-deaths = create_score_text(
-vmath.vector3(0, 0, 1),
-"",
-COLOR_SCORE_TEXT,
-0.62
-)
+name = create_score_text(vmath.vector3(0, 0, 1), "", COLOR_SCORE_TEXT, 0.62),
+points = create_score_text(vmath.vector3(0, 0, 1), "", COLOR_SCORE_TEXT, 0.62),
+damage = create_score_text(vmath.vector3(0, 0, 1), "", COLOR_SCORE_TEXT, 0.62),
+ping = create_score_text(vmath.vector3(0, 0, 1), "", COLOR_SCORE_TEXT, 0.62),
+kills = create_score_text(vmath.vector3(0, 0, 1), "", COLOR_SCORE_TEXT, 0.62),
+deaths = create_score_text(vmath.vector3(0, 0, 1), "", COLOR_SCORE_TEXT, 0.62)
 }
 end
 
@@ -503,7 +410,6 @@ gui.set_enabled(self.score_header_d, false)
 
 for row = 0, MAX_PLAYERS - 1 do
 local nodes = self.score_rows[row]
-
 gui.set_enabled(nodes.name, false)
 gui.set_enabled(nodes.points, false)
 gui.set_enabled(nodes.damage, false)
@@ -539,31 +445,18 @@ self.score_row_count = count
 local panel_height = 80
 
 if count > 1 then
-panel_height =
-panel_height + (count - 1) * SCOREBOARD_ROW_HEIGHT
+panel_height = panel_height + (count - 1) * SCOREBOARD_ROW_HEIGHT
 end
 
 local center_x = screen_width * 0.5
 local center_y = screen_height * 0.5
 local top_y = center_y + panel_height * 0.5
 local left_x = center_x - SCOREBOARD_WIDTH * 0.5
-
 local visible = self.scoreboard_visible and count > 0
 
-gui.set_size(
-self.scoreboard_bg,
-vmath.vector3(SCOREBOARD_WIDTH, panel_height, 0)
-)
-
-gui.set_position(
-self.scoreboard_bg,
-vmath.vector3(center_x, center_y, 0)
-)
-
-gui.set_position(
-self.score_title,
-vmath.vector3(center_x, top_y - 17, 1)
-)
+gui.set_size(self.scoreboard_bg, vmath.vector3(SCOREBOARD_WIDTH, panel_height, 0))
+gui.set_position(self.scoreboard_bg, vmath.vector3(center_x, center_y, 0))
+gui.set_position(self.score_title, vmath.vector3(center_x, top_y - 17, 1))
 
 gui.set_position(self.score_header_name, vmath.vector3(left_x + 48, top_y - 42, 1))
 gui.set_position(self.score_header_points, vmath.vector3(left_x + 240, top_y - 42, 1))
@@ -606,15 +499,11 @@ gui.set_position(nodes.deaths, vmath.vector3(left_x + 470, y, 1))
 gui.set_text(nodes.name, entry.player_id)
 gui.set_text(nodes.points, tostring(entry.points))
 gui.set_text(nodes.damage, tostring(entry.damage))
-gui.set_text(
-nodes.ping,
-entry.ping > 0 and (tostring(entry.ping) .. "ms") or "--"
-)
+gui.set_text(nodes.ping, entry.ping > 0 and (tostring(entry.ping) .. "ms") or "--")
 gui.set_text(nodes.kills, tostring(entry.kills))
 gui.set_text(nodes.deaths, tostring(entry.deaths))
 
-local row_color =
-entry.is_local and COLOR_PLAYER or COLOR_SCORE_TEXT
+local row_color = entry.is_local and COLOR_PLAYER or COLOR_SCORE_TEXT
 
 gui.set_color(nodes.name, row_color)
 gui.set_color(nodes.points, row_color)
@@ -630,20 +519,15 @@ self.score_screen_height = screen_height
 end
 
 local function refresh_scoreboard(self)
-self.scoreboard_entries =
-collect_server_scoreboard_entries(self)
-
+self.scoreboard_entries = collect_server_scoreboard_entries(self)
 layout_scoreboard(self)
 end
 
 local function reset_server_scoreboard(self, count)
-self.expected_scoreboard_count =
-clamp(tonumber(count) or 0, 0, MAX_PLAYERS)
-
+self.expected_scoreboard_count = clamp(tonumber(count) or 0, 0, MAX_PLAYERS)
 self.server_scoreboard_rows = {}
 self.scoreboard_entries = {}
 self.score_row_count = 0
-
 refresh_scoreboard(self)
 end
 
@@ -654,9 +538,7 @@ if row == nil or row < 0 or row >= MAX_PLAYERS then
 return
 end
 
-local player_id = tostring(
-message.player_id or message.name or "UNKNOWN"
-)
+local player_id = tostring(message.player_id or message.name or "UNKNOWN")
 
 if #player_id > 18 then
 player_id = string.sub(player_id, 1, 15) .. "..."
@@ -676,6 +558,8 @@ refresh_scoreboard(self)
 end
 
 local function set_scoreboard_visible(self, visible)
+visible = visible == true
+
 if self.scoreboard_visible == visible then
 return
 end
@@ -696,10 +580,7 @@ COLOR_KILLFEED_BG
 )
 
 self.killfeed_title = create_killfeed_text(
-vmath.vector3(0, 0, 1),
-" ",
-COLOR_SCORE_HEADER,
-0.58
+vmath.vector3(0, 0, 1), " ", COLOR_SCORE_HEADER, 0.58
 )
 
 self.killfeed_rows = {}
@@ -707,26 +588,9 @@ self.killfeed_entries = {}
 
 for row = 1, KILLFEED_MAX_ROWS do
 self.killfeed_rows[row] = {
-killer = create_killfeed_text(
-vmath.vector3(0, 0, 1),
-"",
-COLOR_KILLER,
-0.52
-),
-
-arrow = create_killfeed_text(
-vmath.vector3(0, 0, 1),
-">",
-COLOR_KILLFEED_ARROW,
-0.52
-),
-
-victim = create_killfeed_text(
-vmath.vector3(0, 0, 1),
-"",
-COLOR_VICTIM,
-0.52
-)
+killer = create_killfeed_text(vmath.vector3(0, 0, 1), "", COLOR_KILLER, 0.52),
+arrow = create_killfeed_text(vmath.vector3(0, 0, 1), ">", COLOR_KILLFEED_ARROW, 0.52),
+victim = create_killfeed_text(vmath.vector3(0, 0, 1), "", COLOR_VICTIM, 0.52)
 }
 end
 
@@ -735,11 +599,7 @@ gui.set_enabled(self.killfeed_title, false)
 end
 
 local function layout_killfeed(self)
-local count = math.min(
-#self.killfeed_entries,
-KILLFEED_MAX_ROWS
-)
-
+local count = math.min(#self.killfeed_entries, KILLFEED_MAX_ROWS)
 local visible = count > 0
 
 gui.set_enabled(self.killfeed_bg, visible)
@@ -759,40 +619,11 @@ gui.set_text(nodes.killer, entry.killer_id)
 gui.set_text(nodes.arrow, ">")
 gui.set_text(nodes.victim, entry.victim_id)
 
-local alpha =
-entry.remaining < 1
-and clamp(entry.remaining, 0, 1)
-or 1
+local alpha = entry.remaining < 1 and clamp(entry.remaining, 0, 1) or 1
 
-gui.set_color(
-nodes.killer,
-vmath.vector4(
-COLOR_KILLER.x,
-COLOR_KILLER.y,
-COLOR_KILLER.z,
-alpha
-)
-)
-
-gui.set_color(
-nodes.arrow,
-vmath.vector4(
-COLOR_KILLFEED_ARROW.x,
-COLOR_KILLFEED_ARROW.y,
-COLOR_KILLFEED_ARROW.z,
-alpha
-)
-)
-
-gui.set_color(
-nodes.victim,
-vmath.vector4(
-COLOR_VICTIM.x,
-COLOR_VICTIM.y,
-COLOR_VICTIM.z,
-alpha
-)
-)
+gui.set_color(nodes.killer, vmath.vector4(COLOR_KILLER.x, COLOR_KILLER.y, COLOR_KILLER.z, alpha))
+gui.set_color(nodes.arrow, vmath.vector4(COLOR_KILLFEED_ARROW.x, COLOR_KILLFEED_ARROW.y, COLOR_KILLFEED_ARROW.z, alpha))
+gui.set_color(nodes.victim, vmath.vector4(COLOR_VICTIM.x, COLOR_VICTIM.y, COLOR_VICTIM.z, alpha))
 end
 end
 
@@ -811,39 +642,17 @@ local panel_height = 28 + count * KILLFEED_ROW_HEIGHT
 local center_x = (left_x + right_x) * 0.5
 local center_y = top_y - panel_height * 0.5
 
-gui.set_size(
-self.killfeed_bg,
-vmath.vector3(KILLFEED_WIDTH, panel_height, 0)
-)
-
-gui.set_position(
-self.killfeed_bg,
-vmath.vector3(center_x, center_y, 1)
-)
-
-gui.set_position(
-self.killfeed_title,
-vmath.vector3(left_x + 46, top_y - 13, 1)
-)
+gui.set_size(self.killfeed_bg, vmath.vector3(KILLFEED_WIDTH, panel_height, 0))
+gui.set_position(self.killfeed_bg, vmath.vector3(center_x, center_y, 1))
+gui.set_position(self.killfeed_title, vmath.vector3(left_x + 46, top_y - 13, 1))
 
 for row = 1, count do
 local nodes = self.killfeed_rows[row]
 local y = top_y - 31 - (row - 1) * KILLFEED_ROW_HEIGHT
 
-gui.set_position(
-nodes.killer,
-vmath.vector3(left_x + 62, y, 1)
-)
-
-gui.set_position(
-nodes.arrow,
-vmath.vector3(left_x + 160, y, 1)
-)
-
-gui.set_position(
-nodes.victim,
-vmath.vector3(left_x + 250, y, 1)
-)
+gui.set_position(nodes.killer, vmath.vector3(left_x + 62, y, 1))
+gui.set_position(nodes.arrow, vmath.vector3(left_x + 160, y, 1))
+gui.set_position(nodes.victim, vmath.vector3(left_x + 250, y, 1))
 end
 end
 
@@ -865,13 +674,7 @@ while #self.killfeed_entries > KILLFEED_MAX_ROWS do
 table.remove(self.killfeed_entries)
 end
 
-print(
-"[HUD] Kill Feed: "
-.. entry.killer_id
-.. " -> "
-.. entry.victim_id
-)
-
+print("[HUD] Kill Feed: " .. entry.killer_id .. " -> " .. entry.victim_id)
 layout_killfeed(self)
 end
 
@@ -921,11 +724,7 @@ vmath.vector3(MENU_BUTTON_WIDTH + 2, MENU_BUTTON_HEIGHT + 2, 0),
 COLOR_MENU_BORDER
 )
 
-button.label = gui.new_text_node(
-vmath.vector3(0, 0, 1),
-label
-)
-
+button.label = gui.new_text_node(vmath.vector3(0, 0, 1), label)
 gui.set_font(button.label, "default")
 gui.set_color(button.label, COLOR_MENU_TEXT)
 gui.set_scale(button.label, vmath.vector3(0.8, 0.8, 1))
@@ -954,31 +753,18 @@ vmath.vector3(MENU_PANEL_WIDTH, MENU_PANEL_HEIGHT, 0),
 COLOR_MENU_PANEL
 )
 
-self.menu_title = gui.new_text_node(
-vmath.vector3(0, 0, 1),
-"BATTLE PAUSED"
-)
+self.menu_title = gui.new_text_node(vmath.vector3(0, 0, 1), "BATTLE PAUSED")
 gui.set_font(self.menu_title, "default")
 gui.set_color(self.menu_title, COLOR_MENU_BORDER)
 gui.set_scale(self.menu_title, vmath.vector3(1.0, 1.0, 1))
 
-self.menu_subtitle = gui.new_text_node(
-vmath.vector3(0, 0, 1),
-"SELECT AN ACTION"
-)
+self.menu_subtitle = gui.new_text_node(vmath.vector3(0, 0, 1), "SELECT AN ACTION")
 gui.set_font(self.menu_subtitle, "default")
 gui.set_color(self.menu_subtitle, COLOR_MENU_MUTED)
 gui.set_scale(self.menu_subtitle, vmath.vector3(0.58, 0.58, 1))
 
-self.menu_resume_button = create_menu_button(
-"RETURN TO BATTLE",
-COLOR_MENU_BUTTON
-)
-
-self.menu_leave_button = create_menu_button(
-"LEAVE BATTLE",
-COLOR_MENU_DANGER
-)
+self.menu_resume_button = create_menu_button("RETURN TO BATTLE", COLOR_MENU_BUTTON)
+self.menu_leave_button = create_menu_button("LEAVE BATTLE", COLOR_MENU_DANGER)
 
 self.menu_open = false
 self.menu_pressed_button = nil
@@ -1002,61 +788,25 @@ local function layout_battle_menu(self)
 local width = gui.get_width()
 local height = gui.get_height()
 
-gui.set_size(
-self.menu_overlay,
-vmath.vector3(width, height, 0)
-)
+gui.set_size(self.menu_overlay, vmath.vector3(width, height, 0))
 
 local center_x = width * 0.5
 local center_y = height * 0.5
 
-gui.set_position(
-self.menu_overlay,
-vmath.vector3(center_x, center_y, 1)
-)
-
-gui.set_position(
-self.menu_panel_border,
-vmath.vector3(center_x, center_y, 1)
-)
-
-gui.set_position(
-self.menu_panel,
-vmath.vector3(center_x, center_y, 1)
-)
-
-gui.set_position(
-self.menu_title,
-vmath.vector3(center_x, center_y + 76, 1)
-)
-
-gui.set_position(
-self.menu_subtitle,
-vmath.vector3(center_x, center_y + 47, 1)
-)
-
-local resume_y = center_y + 2
-local leave_y = center_y - 57
+gui.set_position(self.menu_overlay, vmath.vector3(center_x, center_y, 1))
+gui.set_position(self.menu_panel_border, vmath.vector3(center_x, center_y, 1))
+gui.set_position(self.menu_panel, vmath.vector3(center_x, center_y, 1))
+gui.set_position(self.menu_title, vmath.vector3(center_x, center_y + 76, 1))
+gui.set_position(self.menu_subtitle, vmath.vector3(center_x, center_y + 47, 1))
 
 local function position_button(button, y)
-gui.set_position(
-button.border,
-vmath.vector3(center_x, y, 1)
-)
-
-gui.set_position(
-button.box,
-vmath.vector3(center_x, y, 1)
-)
-
-gui.set_position(
-button.label,
-vmath.vector3(center_x, y, 1)
-)
+gui.set_position(button.border, vmath.vector3(center_x, y, 1))
+gui.set_position(button.box, vmath.vector3(center_x, y, 1))
+gui.set_position(button.label, vmath.vector3(center_x, y, 1))
 end
 
-position_button(self.menu_resume_button, resume_y)
-position_button(self.menu_leave_button, leave_y)
+position_button(self.menu_resume_button, center_y + 2)
+position_button(self.menu_leave_button, center_y - 57)
 
 self.menu_screen_width = width
 self.menu_screen_height = height
@@ -1094,8 +844,6 @@ if visible then
 layout_battle_menu(self)
 end
 
--- This pauses only local tank controls. It does not pause
--- the game loop or network manager.
 msg.post(TANK_SPAWNER_URL, "battle_menu_state", {
 open = visible
 })
@@ -1110,8 +858,6 @@ if button_name == "resume" then
 set_battle_menu_visible(self, false)
 
 elseif button_name == "leave" then
--- Return through the existing proxy-based scene manager.
--- The network manager handles leaving the battle scene.
 msg.post(SCENE_MANAGER_URL, "return_to_menu")
 end
 end
@@ -1131,17 +877,310 @@ end
 local function set_menu_button_hover(self, button_name)
 gui.set_color(
 self.menu_resume_button.box,
-button_name == "resume"
-and COLOR_MENU_BUTTON_HOVER
+button_name == "resume" and COLOR_MENU_BUTTON_HOVER
 or self.menu_resume_button.default_color
 )
 
 gui.set_color(
 self.menu_leave_button.box,
-button_name == "leave"
-and COLOR_MENU_BUTTON_HOVER
+button_name == "leave" and COLOR_MENU_BUTTON_HOVER
 or self.menu_leave_button.default_color
 )
+end
+
+-- =========================================================
+-- Чат матча
+-- =========================================================
+
+local function create_chat(self)
+self.chat_open = false
+self.chat_input = ""
+self.chat_entries = {}
+self.chat_hide_timer = 0
+
+self.chat_bg = make_box(
+vmath.vector3(0, 0, 1),
+vmath.vector3(CHAT_WIDTH, 150, 0),
+COLOR_CHAT_BG
+)
+
+self.chat_rows = {}
+
+for i = 1, CHAT_MAX_ROWS do
+self.chat_rows[i] = create_chat_text(
+vmath.vector3(0, 0, 1),
+"",
+COLOR_CHAT_TEXT
+)
+end
+
+self.chat_input_bg = make_box(
+vmath.vector3(0, 0, 1),
+vmath.vector3(CHAT_WIDTH - 12, 26, 0),
+COLOR_BACKGROUND
+)
+
+self.chat_input_node = create_chat_text(
+vmath.vector3(0, 0, 1),
+"",
+COLOR_CHAT_INPUT
+)
+
+-- Выравниваем текст от левого края.
+-- Не используем gui.set_text_leading: такого метода в GUI API нет.
+gui.set_pivot(self.chat_input_node, gui.PIVOT_W)
+
+gui.set_enabled(self.chat_bg, false)
+gui.set_enabled(self.chat_input_bg, false)
+gui.set_enabled(self.chat_input_node, false)
+end
+
+local function layout_chat(self)
+    local visible = self.chat_open
+    or self.chat_hide_timer > 0
+    or #self.chat_entries > 0
+
+    if not visible then
+        gui.set_enabled(self.chat_bg, false)
+        gui.set_enabled(self.chat_input_bg, false)
+        gui.set_enabled(self.chat_input_node, false)
+
+        for _, node in ipairs(self.chat_rows) do
+            gui.set_enabled(node, false)
+        end
+
+        return
+    end
+
+    -- Геометрия чата
+    local left_x = CHAT_MARGIN
+    local bottom_y = CHAT_MARGIN
+
+    local input_height = 30
+    local input_gap = 12
+    local top_padding = 12
+    local bottom_padding = 10
+
+    local count = math.min(#self.chat_entries, CHAT_MAX_ROWS)
+
+    -- Высота ленты сообщений
+    local messages_height = count * CHAT_ROW_HEIGHT
+
+    -- Поле ввода добавляет собственную область снизу
+    local panel_height = top_padding
+    + messages_height
+    + bottom_padding
+
+    if self.chat_open then
+        panel_height = panel_height + input_height + input_gap
+    end
+
+    local center_x = left_x + CHAT_WIDTH * 0.5
+    local center_y = bottom_y + panel_height * 0.5
+
+    -- Фон панели
+    gui.set_size(
+    self.chat_bg,
+    vmath.vector3(CHAT_WIDTH, panel_height, 0)
+)
+
+gui.set_position(
+self.chat_bg,
+vmath.vector3(center_x, center_y, 1)
+)
+
+gui.set_enabled(self.chat_bg, true)
+
+-- Сообщения: старые выше, новые ниже.
+-- Последнее сообщение находится непосредственно над полем ввода.
+local message_bottom_y = bottom_y + bottom_padding
+
+if self.chat_open then
+message_bottom_y = bottom_y
++ input_height
++ input_gap
++ bottom_padding
+end
+
+for i = 1, CHAT_MAX_ROWS do
+local node = self.chat_rows[i]
+local entry = self.chat_entries[i]
+
+local row_visible = entry ~= nil and i <= count
+gui.set_enabled(node, row_visible)
+
+if row_visible then
+    gui.set_text(
+    node,
+    tostring(entry.player_id) .. ": " .. tostring(entry.text)
+)
+
+gui.set_color(node, COLOR_CHAT_TEXT)
+
+gui.set_position(
+node,
+vmath.vector3(
+left_x + 12,
+message_bottom_y
++ (i - 1) * CHAT_ROW_HEIGHT
++ CHAT_ROW_HEIGHT * 0.5,
+1
+)
+)
+end
+end
+
+-- Поле ввода находится в нижней части панели
+if self.chat_open then
+gui.set_enabled(self.chat_input_bg, true)
+gui.set_enabled(self.chat_input_node, true)
+
+gui.set_size(
+self.chat_input_bg,
+vmath.vector3(CHAT_WIDTH - 12, input_height, 0)
+)
+
+gui.set_position(
+self.chat_input_bg,
+vmath.vector3(
+center_x,
+bottom_y + input_height * 0.5,
+1
+)
+)
+
+local shown_input = self.chat_input
+
+if #shown_input == 0 then
+shown_input = "Введите сообщение..."
+end
+
+gui.set_text(self.chat_input_node, "> " .. shown_input)
+
+if #self.chat_input > 0 then
+gui.set_color(self.chat_input_node, COLOR_CHAT_INPUT)
+else
+gui.set_color(self.chat_input_node, COLOR_CHAT_MUTED)
+end
+
+gui.set_position(
+self.chat_input_node,
+vmath.vector3(
+left_x + 12,
+bottom_y + input_height * 0.5,
+1
+)
+)
+else
+gui.set_enabled(self.chat_input_bg, false)
+gui.set_enabled(self.chat_input_node, false)
+end
+end
+
+local function set_chat_open(self, open)
+    open = open == true
+
+    if self.chat_open == open then
+        return
+    end
+
+    self.chat_open = open
+
+    if open then
+        set_scoreboard_visible(self, false)
+        self.chat_input = ""
+        self.chat_hide_timer = CHAT_HIDE_SECONDS
+    else
+        self.chat_hide_timer = CHAT_HIDE_SECONDS
+    end
+
+    -- Сообщаем tank_spawner об открытии И закрытии чата.
+    msg.post(TANK_SPAWNER_URL, "chat_state", {
+        open = open
+    })
+
+    layout_chat(self)
+end
+
+local function add_chat_message(self, player_id, text)
+if type(player_id) ~= "string" or type(text) ~= "string" then
+return
+end
+
+text = text:gsub("[%c]", "")
+
+if text == "" then
+return
+end
+
+if #text > CHAT_MAX_LENGTH then
+text = string.sub(text, 1, CHAT_MAX_LENGTH)
+end
+
+table.insert(self.chat_entries, 1, {
+player_id = short_id(player_id, "UNKNOWN"),
+text = text
+})
+
+while #self.chat_entries > CHAT_MAX_ROWS do
+table.remove(self.chat_entries)
+end
+
+self.chat_hide_timer = CHAT_HIDE_SECONDS
+layout_chat(self)
+end
+
+local function close_chat_without_sending(self)
+self.chat_input = ""
+set_chat_open(self, false)
+end
+
+local function send_chat_input(self)
+local text = self.chat_input:gsub("^%s+", ""):gsub("%s+$", "")
+
+self.chat_input = ""
+
+if text ~= "" then
+-- Сервер должен вернуть chat_message для отображения сообщения.
+msg.post(NETWORK_MANAGER_URL, "network_chat_send", {
+text = text
+})
+end
+
+set_chat_open(self, false)
+end
+
+local function remove_last_utf8_character(text)
+if text == "" then
+return text
+end
+
+local i = #text
+
+-- Отступаем от завершающих байтов UTF-8 к началу последнего символа.
+while i > 1 do
+local byte = string.byte(text, i)
+
+if byte < 128 or byte >= 192 then
+break
+end
+
+i = i - 1
+end
+
+return string.sub(text, 1, i - 1)
+end
+
+local function update_chat(self, dt)
+if not self.chat_open and self.chat_hide_timer > 0 then
+self.chat_hide_timer = math.max(0, self.chat_hide_timer - dt)
+
+if self.chat_hide_timer == 0 then
+self.chat_entries = {}
+end
+
+layout_chat(self)
+end
 end
 
 -- =========================================================
@@ -1158,9 +1197,11 @@ local health_y = reload_y + BAR_HEIGHT + BAR_GAP
 
 layout_bar(self.health_bar, center_x, health_y)
 layout_bar(self.reload_bar, center_x, reload_y)
+
 layout_scoreboard(self)
 layout_killfeed(self)
 layout_combat_feed(self)
+layout_chat(self)
 
 if self.menu_open then
 layout_battle_menu(self)
@@ -1189,7 +1230,9 @@ create_scoreboard(self)
 create_killfeed(self)
 create_combat_feed(self)
 create_battle_menu(self)
+create_chat(self)
 
+-- Сначала вычисляем координаты шкал, затем устанавливаем прогресс.
 layout(self)
 
 set_bar_progress(self.health_bar, 1)
@@ -1200,77 +1243,161 @@ end
 
 function update(self, dt)
 update_killfeed(self, dt)
+update_chat(self, dt)
 
 local width = gui.get_width()
 local height = gui.get_height()
 
-if width ~= self.screen_width
-or height ~= self.screen_height then
+if width ~= self.screen_width or height ~= self.screen_height then
 layout(self)
 
 set_bar_progress(
 self.health_bar,
-self.health / self.max_health
+self.health / math.max(1, self.max_health)
 )
 
-set_bar_progress(
-self.reload_bar,
-self.reload_progress
-)
+set_bar_progress(self.reload_bar, self.reload_progress)
 end
 end
 
 function on_input(self, action_id, action)
-    -- Esc: открываем и закрываем меню.
-    -- Обрабатываем и нажатие, и остальные события этого действия.
-    if action_id == hash("pause") then
-        if action.pressed then
-            set_battle_menu_visible(self, not self.menu_open)
-        end
+-- =====================================================
+-- Чат перехватывает ввод, пока открыт
+-- =====================================================
 
-        return true
-    end
-
-    -- Пока меню открыто, не пропускаем ввод к игровым действиям.
-    if self.menu_open then
-        if action_id == hash("touch") then
-            if action.pressed then
-                self.menu_pressed_button =
-                get_menu_button_at(self, action.x, action.y)
-
-                set_menu_button_hover(
-                self,
-                self.menu_pressed_button
-            )
-
-        elseif action.released then
-            local released_button =
-            get_menu_button_at(self, action.x, action.y)
-
-            local pressed_button = self.menu_pressed_button
-            self.menu_pressed_button = nil
-
-            set_menu_button_hover(self, nil)
-
-            if pressed_button ~= nil
-            and pressed_button == released_button then
-                activate_battle_menu_button(
-                self,
-                pressed_button
-            )
-        end
-    end
+if self.chat_open then
+-- Escape закрывает чат без отправки.
+if action_id == hash("pause") then
+if action.pressed then
+close_chat_without_sending(self)
 end
 
 return true
 end
 
--- Таблица игроков.
+-- Enter отправляет сообщение.
+if action_id == hash("chat") then
+if action.pressed then
+send_chat_input(self)
+end
+
+return true
+end
+
+-- Текстовый ввод поддерживает кириллицу и латиницу.
+if action_id == hash("text_chat") then
+if action.text and action.text ~= "" then
+local typed = action.text:gsub("[%c]", "")
+local remaining = CHAT_MAX_LENGTH - #self.chat_input
+
+if remaining > 0 then
+-- Не обрезаем UTF-8 посередине символа.
+if #typed > remaining then
+local cut = string.sub(typed, 1, remaining)
+
+while #cut > 0 do
+local last_byte = string.byte(cut, #cut)
+
+if last_byte < 128 or last_byte >= 192 then
+break
+end
+
+cut = string.sub(cut, 1, -2)
+end
+
+typed = cut
+end
+
+self.chat_input = self.chat_input .. typed
+end
+
+layout_chat(self)
+end
+
+return true
+end
+
+-- Backspace удаляет последний UTF-8 символ.
+if action_id == hash("erase") then
+if action.pressed then
+self.chat_input = remove_last_utf8_character(self.chat_input)
+layout_chat(self)
+end
+
+return true
+end
+
+-- Не передаём остальные действия управлению танком.
+return true
+end
+
+-- =====================================================
+-- Escape открывает/закрывает боевое меню
+-- =====================================================
+
+if action_id == hash("pause") then
+if action.pressed then
+set_battle_menu_visible(self, not self.menu_open)
+end
+
+return true
+end
+
+-- Enter открывает чат, если меню паузы закрыто.
+if action_id == hash("chat") then
+if action.pressed and not self.menu_open then
+set_chat_open(self, true)
+end
+
+return true
+end
+
+-- =====================================================
+-- Обработка кнопок боевого меню
+-- =====================================================
+
+if self.menu_open then
+if action_id == hash("touch") then
+if action.pressed then
+self.menu_pressed_button = get_menu_button_at(
+self,
+action.x,
+action.y
+)
+
+set_menu_button_hover(self, self.menu_pressed_button)
+
+elseif action.released then
+local released_button = get_menu_button_at(
+self,
+action.x,
+action.y
+)
+
+local pressed_button = self.menu_pressed_button
+self.menu_pressed_button = nil
+
+set_menu_button_hover(self, nil)
+
+if pressed_button ~= nil and pressed_button == released_button then
+activate_battle_menu_button(self, pressed_button)
+end
+end
+end
+
+return true
+end
+
+-- =====================================================
+-- Таблица игроков по Tab
+-- =====================================================
+
 if action_id == hash("show_scoreboard") then
 if action.pressed then
-    set_scoreboard_visible(self, true)
+set_scoreboard_visible(self, true)
+
 elseif action.released then
-    set_scoreboard_visible(self, false)
+set_scoreboard_visible(self, false)
 end
 
 return true
@@ -1282,24 +1409,27 @@ end
 function on_message(self, message_id, message, sender)
 if message_id == hash("reload_progress") then
 self.reload_progress = clamp(
-message.progress or 0,
+tonumber(message.progress) or 0,
 0,
 1
 )
 
-set_bar_progress(
-self.reload_bar,
-self.reload_progress
-)
+set_bar_progress(self.reload_bar, self.reload_progress)
+
+elseif message_id == hash("chat_message") then
+add_chat_message(self, message.player_id, message.text)
+
+elseif message_id == hash("chat_rejected") then
+print("[CHAT] Message rejected: " .. tostring(message.reason or "unknown"))
 
 elseif message_id == hash("health_update") then
 self.max_health = math.max(
 1,
-message.max_health or self.max_health
+tonumber(message.max_health) or self.max_health
 )
 
 self.health = clamp(
-message.health or self.health,
+tonumber(message.health) or self.health,
 0,
 self.max_health
 )
@@ -1316,11 +1446,7 @@ elseif message_id == hash("server_scoreboard_row") then
 update_server_scoreboard_row(self, message)
 
 elseif message_id == hash("killfeed_event") then
-add_killfeed_event(
-self,
-message.killer_id,
-message.victim_id
-)
+add_killfeed_event(self, message.killer_id, message.victim_id)
 
 elseif message_id == hash("combat_feed_event") then
 add_combat_feed_event(self, message)

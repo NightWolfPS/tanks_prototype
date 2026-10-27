@@ -1,10 +1,19 @@
-
 -- network_manager.script
 -- Multiplayer: match lifecycle, remote tank routing, validated hits,
--- scoreboard, ping and server-authorized respawn.
+-- scoreboard, ping, server-authorized respawn and match chat.
 -- Defold 1.13.1 + extension-websocket
 
-local SERVER_URL = "wss://tank-server-dfii.onrender.com"
+-- Server pool. The client probes all servers before opening the gameplay connection.
+local SERVER_URLS = {
+    "wss://tank-server-dfii.onrender.com",
+    "wss://tank-server-1.onrender.com",
+    "wss://tank-server-2.onrender.com",
+    "wss://tank-server-3.onrender.com",
+    "wss://tank-server.hostless.app",
+    "wss://tank-server.layero.dev"
+}
+local FALLBACK_SERVER_URL = SERVER_URLS[2]
+local PROBE_TIMEOUT = 5.0
 local STATE_SEND_INTERVAL = 0.05
 
 -- Forward declarations.
@@ -14,6 +23,7 @@ local remember_player
 local create_remote_tank
 local create_remote_shot
 local handle_server_message
+local websocket_callback
 
 -- ---------------------------------------------------------------------------
 -- Logging and validation
@@ -68,24 +78,24 @@ local function post_to_spawner(self, message_id, payload)
 end
 
 local function post_combat_feed(self, payload)
-    if not self.in_battle or not self.scene_socket then
-        return
-    end
+if not self.in_battle or not self.scene_socket then
+    return
+end
 
-    post_to_scene(
-    self,
-    "/tank_hud#gui",
-    "combat_feed_event",
-    payload
+post_to_scene(
+self,
+"/tank_hud#gui",
+"combat_feed_event",
+payload
 )
 end
 
 local function reset_combat_feed(self)
 if self.scene_socket then
-    post_to_scene(
-    self,
-    "/tank_hud#gui",
-    "combat_feed_reset"
+post_to_scene(
+self,
+"/tank_hud#gui",
+"combat_feed_reset"
 )
 end
 end
@@ -96,25 +106,25 @@ end
 
 local function send_json(self, payload)
 if not self.connected or self.connection == nil then
-    return false
+return false
 end
 
 local ok, encoded = pcall(json.encode, payload)
 
 if not ok then
-    log("JSON encode failed: " .. tostring(encoded))
-    return false
+log("JSON encode failed: " .. tostring(encoded))
+return false
 end
 
 local send_ok, send_error = pcall(function()
-    websocket.send(self.connection, encoded, {
-        type = websocket.DATA_TYPE_TEXT
-    })
+websocket.send(self.connection, encoded, {
+type = websocket.DATA_TYPE_TEXT
+})
 end)
 
 if not send_ok then
-    log("WebSocket send failed: " .. tostring(send_error))
-    return false
+log("WebSocket send failed: " .. tostring(send_error))
+return false
 end
 
 return true
@@ -122,21 +132,21 @@ end
 
 local function send_enter_battle(self)
 if not self.connected then
-    log("Cannot enter battle: WebSocket is not connected")
-    return false
+log("Cannot enter battle: WebSocket is not connected")
+return false
 end
 
 if self.in_battle or self.enter_battle_pending then
-    return true
+return true
 end
 
 self.enter_battle_pending = true
 
 if not send_json(self, {
-    type = "enter_battle"
+type = "enter_battle"
 }) then
-    self.enter_battle_pending = false
-    return false
+self.enter_battle_pending = false
+return false
 end
 
 log("Requested battle entry")
@@ -145,14 +155,14 @@ end
 
 local function send_leave_battle(self)
 if not self.connected then
-    self.in_battle = false
-    self.enter_battle_pending = false
-    reset_combat_feed(self)
-    return false
+self.in_battle = false
+self.enter_battle_pending = false
+reset_combat_feed(self)
+return false
 end
 
 if not self.in_battle and not self.enter_battle_pending then
-    return false
+return false
 end
 
 self.in_battle = false
@@ -161,26 +171,88 @@ self.local_state = nil
 self.state_timer = 0
 
 send_json(self, {
-    type = "leave_battle"
+type = "leave_battle"
 })
 
 log("Requested leaving battle")
 return true
 end
 
+-- ---------------------------------------------------------------------------
+-- Match chat
+-- ---------------------------------------------------------------------------
+
+local function send_chat_message(self, text)
+if not self.connected then
+log("Chat message not sent: WebSocket is disconnected")
+return false
+end
+
+if not self.in_battle or self.scene_name ~= "battle" then
+log("Chat message not sent: player is not in battle")
+return false
+end
+
+if type(text) ~= "string" then
+return false
+end
+
+text = text:gsub("[%c]", "")
+
+if text:match("^%s*$") then
+return false
+end
+
+-- The server independently validates message length and rate.
+if not send_json(self, {
+type = "chat_send",
+text = text
+}) then
+log("Chat message send failed")
+return false
+end
+
+return true
+end
+
+local function post_chat_message(self, message)
+if not self.in_battle
+or self.scene_name ~= "battle"
+or not self.scene_socket then
+return
+end
+
+if type(message.player_id) ~= "string"
+or type(message.text) ~= "string" then
+log("Ignored malformed chat message")
+return
+end
+
+post_to_scene(
+self,
+"/tank_hud#gui",
+"chat_message",
+{
+player_id = message.player_id,
+text = message.text,
+timestamp = tonumber(message.timestamp) or 0
+}
+)
+end
+
 local function post_player_ready(self)
 if not self.in_battle or not self.scene_socket then
-    return
+return
 end
 
 if not self.player_id or not is_number(self.spawn_index) then
-    log("Cannot initialize local player: missing player ID or spawn index")
-    return
+log("Cannot initialize local player: missing player ID or spawn index")
+return
 end
 
 post_to_spawner(self, "network_player_ready", {
-    player_id = self.player_id,
-    spawn_index = self.spawn_index
+player_id = self.player_id,
+spawn_index = self.spawn_index
 })
 end
 
@@ -195,90 +267,89 @@ end
 
 create_remote_tank = function(self, player)
 if not self.in_battle or not self.scene_socket then
-    return
+return
 end
 
 if type(player) ~= "table"
 or type(player.id) ~= "string"
 or player.id == ""
 or player.id == self.player_id then
-    return
+return
 end
 
 if player.life_state == "dead"
 or player.life_state == "inactive" then
-    remove_remote_player(self, player.id)
-    return
+remove_remote_player(self, player.id)
+return
 end
 
 if not is_number(player.x) or not is_number(player.y) then
-    return
+return
 end
 
--- Sending state also instructs tank_spawner to create the tank if needed.
 post_to_spawner(self, "network_remote_player_state", {
-    player_id = player.id,
-    x = player.x,
-    y = player.y,
-    body_angle = player.body_angle or 0,
-    turret_angle = player.turret_angle or 0,
-    state_seq = player.state_seq or 0
+player_id = player.id,
+x = player.x,
+y = player.y,
+body_angle = player.body_angle or 0,
+turret_angle = player.turret_angle or 0,
+state_seq = player.state_seq or 0
 })
 end
 
 remember_player = function(self, player)
 if not self.in_battle then
-    return
+return
 end
 
 if type(player) ~= "table"
 or type(player.id) ~= "string"
 or player.id == ""
 or player.id == self.player_id then
-    return
+return
 end
 
 if player.life_state == "dead"
 or player.life_state == "inactive" then
-    remove_remote_player(self, player.id)
-    return
+remove_remote_player(self, player.id)
+return
 end
 
 local old = self.remote_players[player.id] or {
-    id = player.id,
-    x = nil,
-    y = nil,
-    body_angle = 0,
-    turret_angle = 0,
-    state_seq = 0,
-    life_state = "alive"
+id = player.id,
+x = nil,
+y = nil,
+body_angle = 0,
+turret_angle = 0,
+state_seq = 0,
+life_state = "alive"
 }
 
 if is_number(player.spawn_index) then
-    old.spawn_index = player.spawn_index
+old.spawn_index = player.spawn_index
 end
 
 if is_number(player.x) and is_number(player.y) then
-    if is_number(player.state_seq)
-    and is_number(old.state_seq)
-    and player.state_seq < old.state_seq then
-        return
-    end
+if is_number(player.state_seq)
+and is_number(old.state_seq)
+and player.state_seq < old.state_seq then
+return
+end
 
-    old.x = player.x
-    old.y = player.y
+old.x = player.x
+old.y = player.y
 
-    if is_number(player.body_angle) then
-        old.body_angle = player.body_angle
-    end
+if is_number(player.body_angle) then
+old.body_angle = player.body_angle
+end
 
-    if is_number(player.turret_angle) then
-        old.turret_angle = player.turret_angle
-    end
+if is_number(player.turret_angle) then
+old.turret_angle = player.turret_angle
+end
 
-    if is_number(player.state_seq) then
-        old.state_seq = player.state_seq
-    end
+if is_number(player.state_seq) then
+old.state_seq = player.state_seq
+end
 end
 
 old.life_state = player.life_state or old.life_state or "alive"
@@ -286,18 +357,17 @@ old.life_state = player.life_state or old.life_state or "alive"
 self.remote_players[player.id] = old
 
 if is_number(old.x) and is_number(old.y) then
-    create_remote_tank(self, old)
+create_remote_tank(self, old)
 end
 end
 
 remove_remote_player = function(self, player_id)
 if type(player_id) ~= "string" then
-    return
+return
 end
 
--- Removal is routed to the collection that owns the tank instances.
 post_to_spawner(self, "network_remote_player_remove", {
-    player_id = player_id
+player_id = player_id
 })
 
 self.remote_instances[player_id] = nil
@@ -310,24 +380,22 @@ clear_remote_players = function(self)
 local ids = {}
 local seen = {}
 
--- Include players whose tanks have been requested but whose instance
--- registration message has not yet arrived.
 for player_id in pairs(self.remote_players or {}) do
-    if not seen[player_id] then
-        seen[player_id] = true
-        ids[#ids + 1] = player_id
-    end
+if not seen[player_id] then
+seen[player_id] = true
+ids[#ids + 1] = player_id
+end
 end
 
 for player_id in pairs(self.remote_instances or {}) do
-    if not seen[player_id] then
-        seen[player_id] = true
-        ids[#ids + 1] = player_id
-    end
+if not seen[player_id] then
+seen[player_id] = true
+ids[#ids + 1] = player_id
+end
 end
 
 for _, player_id in ipairs(ids) do
-    remove_remote_player(self, player_id)
+remove_remote_player(self, player_id)
 end
 
 self.remote_players = {}
@@ -336,44 +404,39 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Remote instance registration
---
--- tank_spawner sends IDs after successfully creating a remote tank.
--- We store IDs only to match physics raycast results with server player IDs.
--- No instance API is called from this script.
 -- ---------------------------------------------------------------------------
 
 local function register_remote_instance(self, message)
 local player_id = message.player_id
 
 if type(player_id) ~= "string" or player_id == "" then
-    return
+return
 end
 
--- If the player has already left, discard a late registration.
 if not self.in_battle or not self.remote_players[player_id] then
-    post_to_spawner(self, "network_remote_player_remove", {
-        player_id = player_id
-    })
-    return
+post_to_spawner(self, "network_remote_player_remove", {
+player_id = player_id
+})
+return
 end
 
 local registered_ids = {}
 
 if type(message.ids) == "table" then
-    for _, object_id in pairs(message.ids) do
-        if object_id ~= nil then
-            registered_ids[#registered_ids + 1] = object_id
-        end
-    end
+for _, object_id in pairs(message.ids) do
+if object_id ~= nil then
+registered_ids[#registered_ids + 1] = object_id
+end
+end
 end
 
 if message.root_id ~= nil then
-    registered_ids[#registered_ids + 1] = message.root_id
+registered_ids[#registered_ids + 1] = message.root_id
 end
 
 self.remote_instances[player_id] = {
-    root_id = message.root_id,
-    ids = registered_ids
+root_id = message.root_id,
+ids = registered_ids
 }
 
 log("Registered remote tank IDs for " .. player_id
@@ -384,7 +447,7 @@ local function unregister_remote_instance(self, message)
 local player_id = message.player_id
 
 if type(player_id) ~= "string" then
-    return
+return
 end
 
 self.remote_instances[player_id] = nil
@@ -394,19 +457,19 @@ end
 
 local function find_remote_player_for_object(self, object_id)
 if object_id == nil then
-    return nil
+return nil
 end
 
 for player_id, instance in pairs(self.remote_instances) do
-    if instance.root_id == object_id then
-        return player_id
-    end
+if instance.root_id == object_id then
+return player_id
+end
 
-    for _, registered_id in ipairs(instance.ids or {}) do
-        if registered_id == object_id then
-            return player_id
-        end
-    end
+for _, registered_id in ipairs(instance.ids or {}) do
+if registered_id == object_id then
+return player_id
+end
+end
 end
 
 return nil
@@ -418,24 +481,22 @@ end
 
 create_remote_shot = function(self, player_id, shot)
 if not self.in_battle or not self.scene_socket then
-    return
+return
 end
 
 if type(player_id) ~= "string"
 or player_id == self.player_id
 or type(shot) ~= "table" then
-    return
+return
 end
 
--- tank_spawner owns the remote tank and its turret factories.
--- It also queues shots while the remote tank is being created.
 post_to_spawner(self, "network_remote_shot", {
-    player_id = player_id,
-    x = is_number(shot.x) and shot.x or 0,
-    y = is_number(shot.y) and shot.y or 0,
-    z = is_number(shot.z) and shot.z or 0.5,
-    angle = is_number(shot.angle) and shot.angle or 0,
-    shot_id = type(shot.shot_id) == "string" and shot.shot_id or ""
+player_id = player_id,
+x = is_number(shot.x) and shot.x or 0,
+y = is_number(shot.y) and shot.y or 0,
+z = is_number(shot.z) and shot.z or 0.5,
+angle = is_number(shot.angle) and shot.angle or 0,
+shot_id = type(shot.shot_id) == "string" and shot.shot_id or ""
 })
 end
 
@@ -446,59 +507,55 @@ end
 handle_server_message = function(self, message)
 if type(message) ~= "table"
 or type(message.type) ~= "string" then
-    log("Ignored malformed server message")
-    return
+log("Ignored malformed server message")
+return
 end
 
 if message.type == "ping" then
-    if is_number(message.ping_id) then
-        send_json(self, {
-            type = "pong",
-            ping_id = message.ping_id
-        })
-    else
-        log("Ignored ping without a valid ping_id")
-    end
+if is_number(message.ping_id) then
+send_json(self, {
+type = "pong",
+ping_id = message.ping_id
+})
+else
+log("Ignored ping without a valid ping_id")
+end
 
-    return
+return
 
 elseif message.type == "welcome" then
-    self.player_id = message.player_id
-    self.spawn_index = nil
-    self.in_battle = false
-    self.enter_battle_pending = false
+self.player_id = message.player_id
+self.spawn_index = nil
+self.in_battle = false
+self.enter_battle_pending = false
 
-    log("Connected as " .. tostring(self.player_id))
+log("Connected as " .. tostring(self.player_id))
 
-    if self.scene_name == "battle" and self.scene_socket then
-        send_enter_battle(self)
-    end
+if self.scene_name == "battle" and self.scene_socket then
+send_enter_battle(self)
+end
 
 elseif message.type == "enter_battle_accepted" then
-    self.enter_battle_pending = false
-    self.in_battle = true
-    reset_combat_feed(self)
+self.enter_battle_pending = false
+self.in_battle = true
+reset_combat_feed(self)
 
-    if type(message.player_id) == "string" then
-        self.player_id = message.player_id
-    end
+if type(message.player_id) == "string" then
+self.player_id = message.player_id
+end
 
-    self.spawn_index = tonumber(message.spawn_index)
+self.spawn_index = tonumber(message.spawn_index)
 
-    log(
-    "Entered battle as " .. tostring(self.player_id)
-    .. ", spawn index " .. tostring(self.spawn_index)
+log(
+"Entered battle as " .. tostring(self.player_id)
+.. ", spawn index " .. tostring(self.spawn_index)
 )
 
--- Clear any old match instances before registering this match.
 clear_remote_players(self)
-
--- Initialize the local tank only after server acceptance.
 post_player_ready(self)
 
--- The server provides the current participants.
 for _, player in ipairs(message.players or {}) do
-    remember_player(self, player)
+remember_player(self, player)
 end
 
 elseif message.type == "enter_battle_rejected" then
@@ -515,7 +572,7 @@ post_to_spawner(
 self,
 "network_battle_entry_rejected",
 {
-    reason = message.reason or "unknown"
+reason = message.reason or "unknown"
 }
 )
 
@@ -551,6 +608,16 @@ and message.player_id ~= self.player_id then
 create_remote_shot(self, message.player_id, message)
 end
 
+elseif message.type == "chat_message" then
+post_chat_message(self, message)
+
+elseif message.type == "chat_rejected" then
+log("Chat message rejected: " .. tostring(message.reason))
+
+post_to_scene(self, "/tank_hud#gui", "chat_rejected", {
+reason = message.reason or "unknown"
+})
+
 elseif message.type == "shot_registered" then
 log(
 "Shot accepted: client=" .. tostring(message.client_shot_id)
@@ -578,109 +645,109 @@ local effects = type(message.effects) == "table"
 and message.effects
 or {}
 
--- Урон, нанесённый другим игроком.
+-- Damage received from another player.
 if target_id == self.player_id then
 post_to_spawner(self, "network_apply_damage", {
-    damage = damage,
-    killer_id = shooter_id,
-    hit_x = message.x,
-    hit_y = message.y,
-    effects = effects,
-    critical = effects.critical == true
+damage = damage,
+killer_id = shooter_id,
+hit_x = message.x,
+hit_y = message.y,
+effects = effects,
+critical = effects.critical == true
 })
 
 if type(shooter_id) == "string" and shooter_id ~= "" then
-    if damage > 0 then
-        post_combat_feed(self, {
-            kind = "damage_received",
-            damage = damage,
-            player_id = shooter_id
-        })
-    end
-
-    if tonumber(effects.burn_duration)
-    and effects.burn_duration > 0 then
-        post_combat_feed(self, {
-            kind = "effect_received",
-            effect = "burn",
-            player_id = shooter_id
-        })
-    end
-
-    if tonumber(effects.stun_duration)
-    and effects.stun_duration > 0 then
-        post_combat_feed(self, {
-            kind = "effect_received",
-            effect = "stun",
-            player_id = shooter_id
-        })
-    end
-
-    if tonumber(effects.slow_duration)
-    and effects.slow_duration > 0 then
-        post_combat_feed(self, {
-            kind = "effect_received",
-            effect = "slow",
-            player_id = shooter_id
-        })
-    end
-
-    if effects.critical == true then
-        post_combat_feed(self, {
-            kind = "effect_received",
-            effect = "critical",
-            player_id = shooter_id
-        })
-    end
-end
+if damage > 0 then
+post_combat_feed(self, {
+kind = "damage_received",
+damage = damage,
+player_id = shooter_id
+})
 end
 
--- Урон, нанесённый нами другому игроку.
+if tonumber(effects.burn_duration)
+and effects.burn_duration > 0 then
+post_combat_feed(self, {
+kind = "effect_received",
+effect = "burn",
+player_id = shooter_id
+})
+end
+
+if tonumber(effects.stun_duration)
+and effects.stun_duration > 0 then
+post_combat_feed(self, {
+kind = "effect_received",
+effect = "stun",
+player_id = shooter_id
+})
+end
+
+if tonumber(effects.slow_duration)
+and effects.slow_duration > 0 then
+post_combat_feed(self, {
+kind = "effect_received",
+effect = "slow",
+player_id = shooter_id
+})
+end
+
+if effects.critical == true then
+post_combat_feed(self, {
+kind = "effect_received",
+effect = "critical",
+player_id = shooter_id
+})
+end
+end
+end
+
+-- Damage dealt by us to another player.
 if shooter_id == self.player_id
 and type(target_id) == "string"
 and target_id ~= "" then
 
 if damage > 0 then
-    post_combat_feed(self, {
-        kind = "damage_dealt",
-        damage = damage,
-        player_id = target_id
-    })
+post_combat_feed(self, {
+kind = "damage_dealt",
+damage = damage,
+player_id = target_id
+})
 end
 
 if tonumber(effects.burn_duration)
 and effects.burn_duration > 0 then
-    post_combat_feed(self, {
-        kind = "effect_dealt",
-        effect = "burn",
-        player_id = target_id
-    })
+post_combat_feed(self, {
+kind = "effect_dealt",
+effect = "burn",
+player_id = target_id
+})
 end
 
 if tonumber(effects.stun_duration)
 and effects.stun_duration > 0 then
-    post_combat_feed(self, {
-        kind = "effect_dealt",
-        effect = "stun",
-        player_id = target_id
-    })
+post_combat_feed(self, {
+kind = "effect_dealt",
+effect = "stun",
+player_id = target_id
+})
 end
 
 if tonumber(effects.slow_duration)
 and effects.slow_duration > 0 then
-    post_combat_feed(self, {
-        kind = "effect_dealt",
-        effect = "slow",
-        player_id = target_id
-    })
+post_combat_feed(self, {
+kind = "effect_dealt",
+effect = "slow",
+player_id = target_id
+})
 end
 
 if effects.critical == true then
-    post_combat_feed(self, {
-        kind = "effect_dealt",
-        effect = "critical",
-        player_id = target_id
-    })
+post_combat_feed(self, {
+kind = "effect_dealt",
+effect = "critical",
+player_id = target_id
+})
 end
 end
 
@@ -690,33 +757,33 @@ local owner_id = message.killer_id or ""
 local damage = math.max(0, tonumber(message.damage) or 0)
 
 if target_id == self.player_id then
-    post_to_spawner(self, "network_apply_damage", {
-        damage = damage,
-        killer_id = owner_id,
-        effect = message.effect or "burn",
-        status_tick = true
-    })
+post_to_spawner(self, "network_apply_damage", {
+damage = damage,
+killer_id = owner_id,
+effect = message.effect or "burn",
+status_tick = true
+})
 
-    if damage > 0 and owner_id ~= "" then
-        post_combat_feed(self, {
-            kind = "damage_received",
-            damage = damage,
-            player_id = owner_id
-        })
-    end
+if damage > 0 and owner_id ~= "" then
+post_combat_feed(self, {
+kind = "damage_received",
+damage = damage,
+player_id = owner_id
+})
+end
 end
 
--- Учитываем периодический урон поджога, нанесённый нами.
+-- Periodic burn damage dealt by us.
 if owner_id == self.player_id
 and type(target_id) == "string"
 and target_id ~= ""
 and damage > 0 then
 
-    post_combat_feed(self, {
-        kind = "damage_dealt",
-        damage = damage,
-        player_id = target_id
-    })
+post_combat_feed(self, {
+kind = "damage_dealt",
+damage = damage,
+player_id = target_id
+})
 end
 
 elseif message.type == "status_effect_expired" then
@@ -757,7 +824,6 @@ log("Ignored malformed scoreboard")
 return
 end
 
--- Do not render match statistics in the menu.
 if not self.in_battle or not self.scene_socket then
 return
 end
@@ -811,15 +877,150 @@ end
 end
 
 -- ---------------------------------------------------------------------------
+-- Server discovery
+-- ---------------------------------------------------------------------------
+
+local function close_probe(self, connection)
+    local probe = self.probe_connections and self.probe_connections[connection]
+    if not probe or probe.done then
+        return
+    end
+
+    probe.done = true
+    self.probe_completed = (self.probe_completed or 0) + 1
+
+    pcall(function()
+        websocket.disconnect(connection)
+    end)
+
+    if self.probe_completed >= #SERVER_URLS then
+        local candidates = {}
+
+        for _, item in pairs(self.probe_results or {}) do
+            if item.ok then
+                table.insert(candidates, item)
+            end
+        end
+
+        table.sort(candidates, function(a, b)
+            local a_capacity = math.max(1, a.max_players or 6)
+            local b_capacity = math.max(1, b.max_players or 6)
+            local a_load = (a.players_in_battle or a.max_players or 6) / a_capacity
+            local b_load = (b.players_in_battle or b.max_players or 6) / b_capacity
+
+            if a_load ~= b_load then
+                return a_load < b_load
+            end
+            return (a.response_ms or 999999) < (b.response_ms or 999999)
+        end)
+
+        local selected = candidates[1]
+        local url = selected and selected.url or FALLBACK_SERVER_URL
+
+        self.selected_server_url = url
+        self.probing_servers = false
+        log("Server selected: " .. url
+            .. (selected and (" | battle players=" .. tostring(selected.players_in_battle)
+                .. "/" .. tostring(selected.max_players)
+                .. " | response=" .. tostring(selected.response_ms) .. " ms") or " | no status response; using fallback"))
+
+        self.connection = websocket.connect(url, {
+            timeout = 3000
+        }, websocket_callback)
+    end
+end
+
+local function start_server_probes(self)
+    self.probing_servers = true
+    self.probe_elapsed = 0
+    self.probe_completed = 0
+    self.probe_connections = {}
+    self.probe_results = {}
+
+    for _, url in ipairs(SERVER_URLS) do
+        local started_at = os.clock()
+        local connection = websocket.connect(url, {
+            timeout = 3000
+        }, websocket_callback)
+
+        if connection then
+            self.probe_connections[connection] = {
+                url = url,
+                started_at = started_at,
+                done = false,
+                connected = false
+            }
+        else
+            self.probe_results[url] = {
+                url = url,
+                ok = false
+            }
+            self.probe_completed = self.probe_completed + 1
+        end
+    end
+
+    if self.probe_completed >= #SERVER_URLS then
+        self.probing_servers = false
+        self.connection = websocket.connect(FALLBACK_SERVER_URL, {
+            timeout = 3000
+        }, websocket_callback)
+    end
+end
+
+-- ---------------------------------------------------------------------------
 -- WebSocket callback
 -- ---------------------------------------------------------------------------
 
-local function websocket_callback(self, connection, data)
+websocket_callback = function(self, connection, data)
+    local probe = self.probe_connections and self.probe_connections[connection]
+    if probe then
+        if probe.done then
+            return
+        end
+
+        if data.event == websocket.EVENT_CONNECTED then
+            probe.connected = true
+            local ok, err = pcall(function()
+                websocket.send(connection, json.encode({ type = "server_status" }), {
+                    type = websocket.DATA_TYPE_TEXT
+                })
+            end)
+            if not ok then
+                log("Probe request failed for " .. probe.url .. ": " .. tostring(err))
+                self.probe_results[probe.url] = { url = probe.url, ok = false }
+                close_probe(self, connection)
+            end
+
+        elseif data.event == websocket.EVENT_MESSAGE then
+            local ok, decoded = pcall(json.decode, data.message)
+            if ok and type(decoded) == "table" and decoded.type == "server_status" then
+                local response_ms = math.max(0, math.floor((self.probe_elapsed or 0) * 1000 + 0.5))
+                self.probe_results[probe.url] = {
+                    url = probe.url,
+                    ok = true,
+                    players_in_battle = tonumber(decoded.players_in_battle) or 6,
+                    max_players = tonumber(decoded.max_players) or 6,
+                    available_slots = tonumber(decoded.available_slots) or 0,
+                    response_ms = response_ms
+                }
+                close_probe(self, connection)
+            elseif not ok then
+                log("Ignored malformed probe response from " .. probe.url)
+            end
+            -- Ignore the ordinary welcome message; wait for server_status.
+
+        elseif data.event == websocket.EVENT_ERROR or data.event == websocket.EVENT_DISCONNECTED then
+            self.probe_results[probe.url] = { url = probe.url, ok = false }
+            close_probe(self, connection)
+        end
+        return
+    end
+
 if data.event == websocket.EVENT_CONNECTED then
 self.connection = connection
 self.connected = true
 
-log("Connected to " .. SERVER_URL)
+log("Connected to " .. tostring(self.selected_server_url or FALLBACK_SERVER_URL))
 
 if self.scene_name == "battle" and self.scene_socket then
 send_enter_battle(self)
@@ -879,6 +1080,12 @@ self.scene_name = "none"
 
 self.connection = nil
 self.connected = false
+self.selected_server_url = nil
+self.probing_servers = false
+self.probe_elapsed = 0
+self.probe_completed = 0
+self.probe_connections = {}
+self.probe_results = {}
 
 self.player_id = nil
 self.spawn_index = nil
@@ -892,14 +1099,24 @@ self.remote_instances = {}
 self.local_state = nil
 self.state_timer = 0
 
-log("Connecting to " .. SERVER_URL)
-
-self.connection = websocket.connect(SERVER_URL, {
-timeout = 3000
-}, websocket_callback)
+log("Checking availability of " .. tostring(#SERVER_URLS) .. " servers")
+start_server_probes(self)
 end
 
 function update(self, dt)
+if self.probing_servers then
+    self.probe_elapsed = (self.probe_elapsed or 0) + dt
+    if self.probe_elapsed >= PROBE_TIMEOUT then
+        -- Mark every unfinished probe as failed. The last completion selects a server.
+        for connection, probe in pairs(self.probe_connections or {}) do
+            if not probe.done then
+                self.probe_results[probe.url] = { url = probe.url, ok = false }
+                close_probe(self, connection)
+            end
+        end
+    end
+end
+
 if not self.connected
 or not self.in_battle
 or self.scene_name ~= "battle"
@@ -1003,6 +1220,9 @@ y = message.y or 0,
 body_angle = message.body_angle or 0,
 turret_angle = message.turret_angle or 0
 }
+
+elseif message_id == hash("network_chat_send") then
+send_chat_message(self, message.text)
 
 elseif message_id == hash("network_player_inactive") then
 if self.connected and self.in_battle then
