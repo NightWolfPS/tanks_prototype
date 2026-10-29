@@ -1,9 +1,9 @@
 name: "tank"
 instances {
   id: "tank"
-  prototype: "/main/objects/tank.go"
+  prototype: "/main/objects/hulls/tank.go"
   children: "tank_name"
-  children: "tank_turret"
+  children: "twin_barrel_turret"
   component_properties {
     id: "tank_controller"
     properties {
@@ -19,27 +19,6 @@ instances {
   }
 }
 instances {
-  id: "tank_turret"
-  prototype: "/main/objects/tank_turret.go"
-  position {
-    y: -12.0
-    z: 0.5
-  }
-  component_properties {
-    id: "turret_controller"
-    properties {
-      id: "turret_turn_speed"
-      value: "65.0"
-      type: PROPERTY_TYPE_NUMBER
-    }
-    properties {
-      id: "fire_cooldown"
-      value: "4.5"
-      type: PROPERTY_TYPE_NUMBER
-    }
-  }
-}
-instances {
   id: "tank_name"
   prototype: "/main/objects/tank_name.go"
   position {
@@ -48,6 +27,14 @@ instances {
   scale3 {
     x: 0.8
     y: 0.8
+  }
+}
+instances {
+  id: "twin_barrel_turret"
+  prototype: "/main/objects/turrets/twin_barrel_turret.go"
+  position {
+    y: -10.0
+    z: 0.5
   }
 }
 scale_along_z: 0

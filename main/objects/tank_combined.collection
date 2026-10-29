@@ -1,12 +1,12 @@
 name: "tank_combined"
 instances {
   id: "tank"
-  prototype: "/main/objects/tank.go"
+  prototype: "/main/objects/hulls/tank.go"
   children: "tank_turret"
 }
 instances {
   id: "tank_turret"
-  prototype: "/main/objects/tank_turret.go"
+  prototype: "/main/objects/turrets/tank_turret.go"
   position {
     z: 0.1
   }
