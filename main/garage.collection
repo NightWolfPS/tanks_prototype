@@ -1,2 +1,25 @@
 name: "garage"
+instances {
+  id: "garage_gui"
+  prototype: "/main/objects/garage_gui.go"
+  position {
+    z: -1.0
+  }
+}
+instances {
+  id: "garage_preview"
+  prototype: "/main/objects/garage_preview.go"
+  position {
+    z: 1.0
+  }
+}
+instances {
+  id: "camera"
+  prototype: "/main/objects/camera.go"
+  position {
+    x: 640.0
+    y: 360.0
+    z: 100.0
+  }
+}
 scale_along_z: 0

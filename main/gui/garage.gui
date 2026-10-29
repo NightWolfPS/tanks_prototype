@@ -1,0 +1,7 @@
+script: "/main/gui/garage.gui_script"
+fonts {
+  name: "ru"
+  font: "/main/fonts/ru.font"
+}
+material: "/builtins/materials/gui.material"
+adjust_reference: ADJUST_REFERENCE_PARENT

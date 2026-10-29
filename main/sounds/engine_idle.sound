@@ -1,0 +1,3 @@
+sound: "/main/sounds/engine_idle.ogg"
+looping: 1
+gain: 0.25

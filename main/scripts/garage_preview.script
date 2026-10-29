@@ -1,0 +1,115 @@
+-- garage_preview.script
+-- Defold 1.13.1
+
+local HULLS = {
+	light_hull = {
+		factory = "#light_hull_factory",
+	},
+}
+
+local TURRETS = {
+	tank_turret = {
+		factory = "#tank_turret_factory",
+	},
+
+	twin_barrel_turret = {
+		factory = "#twin_barrel_turret_factory",
+	},
+}
+
+-- Мировые координаты превью.
+local PREVIEW_POSITION = vmath.vector3(640, 425, 1)
+
+
+local function log(message)
+	print("[GARAGE PREVIEW] " .. tostring(message))
+end
+
+
+local function remove_instance(instance)
+	if instance then
+		go.delete(instance)
+	end
+end
+
+
+local function clear_preview(self)
+	remove_instance(self.hull)
+	remove_instance(self.turret)
+
+	self.hull = nil
+	self.turret = nil
+end
+
+
+local function create_instance(module, position)
+	local ok, result = pcall(function()
+		return factory.create(
+		module.factory,
+		position,
+		vmath.quat()
+	)
+end)
+
+if not ok then
+	log("Creation failed for " .. module.factory .. ": " .. tostring(result))
+	return nil
+end
+
+log("Created " .. module.factory)
+return result
+end
+
+
+local function update_preview(self, hull_id, turret_id)
+log("Update requested: " .. tostring(hull_id)
+.. " + " .. tostring(turret_id))
+
+local hull = HULLS[hull_id]
+local turret = TURRETS[turret_id]
+
+if not hull then
+	log("Unknown hull ID: " .. tostring(hull_id))
+	return
+end
+
+if not turret then
+	log("Unknown turret ID: " .. tostring(turret_id))
+	return
+end
+
+clear_preview(self)
+
+self.hull = create_instance(hull, PREVIEW_POSITION)
+self.turret = create_instance(turret, PREVIEW_POSITION)
+
+if self.hull and self.turret then
+	log("Both preview objects created")
+else
+	log("Preview incomplete; check errors above")
+end
+end
+
+
+function init(self)
+self.hull = nil
+self.turret = nil
+
+log("Initialized")
+end
+
+
+function on_message(self, message_id, message, sender)
+if message_id == hash("garage_preview_update") then
+	update_preview(
+	self,
+	message.hull_id,
+	message.turret_id
+)
+end
+end
+
+
+function final(self)
+clear_preview(self)
+end

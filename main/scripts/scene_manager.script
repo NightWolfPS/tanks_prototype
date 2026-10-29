@@ -61,11 +61,6 @@ local function load_scene(self, scene_name)
         return
     end
 
-    if scene_name == "garage" and not self.garage_available then
-        log("Garage proxy is not configured yet")
-        return
-    end
-
     if self.transitioning then
         log("Scene transition already in progress")
         return

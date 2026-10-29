@@ -1,7 +1,7 @@
 name: "tank_combined"
 instances {
   id: "tank"
-  prototype: "/main/objects/hulls/tank.go"
+  prototype: "/main/objects/hulls/light_hull.go"
   children: "tank_turret"
 }
 instances {

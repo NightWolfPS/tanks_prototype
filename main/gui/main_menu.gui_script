@@ -1,263 +1,229 @@
-
 -- main_menu.gui_script
--- Main menu with mouse input diagnostics.
+-- Main menu with a compact, manually selectable server dropdown.
 -- Defold 1.13.1
 
 local COLORS = {
-	background = vmath.vector4(0.055, 0.075, 0.085, 1.0),
-	panel = vmath.vector4(0.10, 0.13, 0.14, 1.0),
-	button = vmath.vector4(0.16, 0.22, 0.23, 1.0),
-	accent = vmath.vector4(0.91, 0.63, 0.20, 1.0),
-	text = vmath.vector4(0.93, 0.94, 0.90, 1.0),
-	muted = vmath.vector4(0.58, 0.65, 0.64, 1.0)
+    background = vmath.vector4(0.055, 0.075, 0.085, 1.0),
+    panel = vmath.vector4(0.10, 0.13, 0.14, 1.0),
+    button = vmath.vector4(0.16, 0.22, 0.23, 1.0),
+    accent = vmath.vector4(0.91, 0.63, 0.20, 1.0),
+    text = vmath.vector4(0.93, 0.94, 0.90, 1.0),
+    muted = vmath.vector4(0.58, 0.65, 0.64, 1.0)
 }
 
 local BUTTON_WIDTH = 300
 local BUTTON_HEIGHT = 58
 local BUTTON_GAP = 16
+local SERVERS = {
+    { id = "US1", url = "wss://tank-server-dfii.onrender.com" },
+    { id = "US2", url = "wss://tank-server-3.onrender.com" },
+    { id = "US3", url = "wss://tank-server.hostless.app" },
+    { id = "EU1", url = "wss://tank-server-1.onrender.com" },
+    { id = "EU2", url = "wss://tank-server.layero.app" },
+    { id = "AS1", url = "wss://tank-server-2.onrender.com" }
+}
+local STATUS_POLL_INTERVAL = 5.0
 
-local function log(message)
-	print("[MAIN MENU] " .. tostring(message))
-end
+local function log(message) print("[MAIN MENU] " .. tostring(message)) end
 
 local function create_box(position, size, color)
-	local node = gui.new_box_node(position, size)
-	gui.set_color(node, color)
-	return node
+    local node = gui.new_box_node(position, size)
+    gui.set_color(node, color)
+    return node
 end
 
 local function create_text(position, value, scale, color)
-	local node = gui.new_text_node(position, value)
-	gui.set_scale(node, vmath.vector3(scale, scale, 1))
-	gui.set_color(node, color)
-	return node
+    local node = gui.new_text_node(position, value)
+    gui.set_scale(node, vmath.vector3(scale, scale, 1))
+    gui.set_color(node, color)
+    return node
 end
 
 local function create_button(self, id, label, y)
-	local center_x = self.width * 0.5
-
-	local box = create_box(
-	vmath.vector3(center_x, y, 0),
-	vmath.vector3(
-	self.button_width,
-	self.button_height,
-	0
-),
-COLORS.button
-)
-
-local text = create_text(
-vmath.vector3(center_x, y, 0.1),
-label,
-self.scale,
-COLORS.text
-)
-
-table.insert(self.buttons, {
-id = id,
-box = box,
-label = text
-})
+    local center_x = self.width * 0.5
+    local box = create_box(vmath.vector3(center_x, y, 0),
+        vmath.vector3(self.button_width, self.button_height, 0), COLORS.button)
+    local text = create_text(vmath.vector3(center_x, y, 0.1), label, self.scale, COLORS.text)
+    table.insert(self.buttons, { id = id, box = box, label = text })
 end
 
-local function build_menu(self)
-self.width = gui.get_width()
-self.height = gui.get_height()
-
-self.scale = math.min(
-1,
-self.width / 640,
-self.height / 480
-)
-
-self.button_width = BUTTON_WIDTH * self.scale
-self.button_height = BUTTON_HEIGHT * self.scale
-self.button_gap = BUTTON_GAP * self.scale
-
-self.background = create_box(
-vmath.vector3(
-self.width * 0.5,
-self.height * 0.5,
--1
-),
-vmath.vector3(self.width, self.height, 0),
-COLORS.background
-)
-
-self.panel = create_box(
-vmath.vector3(
-self.width * 0.5,
-self.height * 0.5,
--0.5
-),
-vmath.vector3(
-math.min(self.width * 0.82, 500 * self.scale),
-math.min(self.height * 0.88, 570 * self.scale),
-0
-),
-COLORS.panel
-)
-
-local center_x = self.width * 0.5
-
-self.title = create_text(
-vmath.vector3(center_x, self.height * 0.77, 0),
-"TANKS",
-2.0 * self.scale,
-COLORS.accent
-)
-
-self.subtitle = create_text(
-vmath.vector3(center_x, self.height * 0.71, 0),
-"CORPORATE COMBAT",
-0.75 * self.scale,
-COLORS.muted
-)
-
-self.buttons = {}
-
-local first_y = self.height * 0.55
-local step = self.button_height + self.button_gap
-
-create_button(self, "battle", "BATTLE", first_y)
-create_button(self, "garage", "GARAGE", first_y - step)
-create_button(self, "exit", "EXIT", first_y - step * 2)
-
-self.footer = create_text(
-vmath.vector3(center_x, self.height * 0.13, 0),
-"HELIOS DYNAMICS / VANGUARD GROUP",
-0.55 * self.scale,
-COLORS.muted
-)
-
-log("Menu created. GUI size: "
-.. tostring(self.width) .. "x" .. tostring(self.height))
-log("Buttons created: " .. tostring(#self.buttons))
+local function destroy_node(node)
+    if node then gui.delete_node(node) end
 end
 
 local function destroy_menu(self)
-local single_nodes = {
-"background",
-"panel",
-"title",
-"subtitle",
-"footer"
-}
-
-for _, key in ipairs(single_nodes) do
-if self[key] then
-gui.delete_node(self[key])
-self[key] = nil
-end
+    for _, key in ipairs({"background", "panel", "title", "subtitle", "footer", "server_button_box", "server_button_label", "server_status_label"}) do
+        destroy_node(self[key]); self[key] = nil
+    end
+    if self.buttons then
+        for _, button in ipairs(self.buttons) do destroy_node(button.label); destroy_node(button.box) end
+        self.buttons = {}
+    end
+    if self.server_rows then
+        for _, row in ipairs(self.server_rows) do destroy_node(row.label); destroy_node(row.box) end
+        self.server_rows = {}
+    end
 end
 
-if self.buttons then
-for _, button in ipairs(self.buttons) do
-gui.delete_node(button.label)
-gui.delete_node(button.box)
+local function build_menu(self)
+    self.width = gui.get_width()
+    self.height = gui.get_height()
+    self.scale = math.min(1, self.width / 640, self.height / 480)
+    self.button_width = BUTTON_WIDTH * self.scale
+    self.button_height = BUTTON_HEIGHT * self.scale
+    self.button_gap = BUTTON_GAP * self.scale
+
+    self.background = create_box(vmath.vector3(self.width * 0.5, self.height * 0.5, -1),
+        vmath.vector3(self.width, self.height, 0), COLORS.background)
+    self.panel = create_box(vmath.vector3(self.width * 0.5, self.height * 0.5, -0.5),
+        vmath.vector3(math.min(self.width * 0.82, 500 * self.scale), math.min(self.height * 0.88, 570 * self.scale), 0), COLORS.panel)
+    local center_x = self.width * 0.5
+    self.title = create_text(vmath.vector3(center_x, self.height * 0.77, 0), "TANKS", 2.0 * self.scale, COLORS.accent)
+    self.subtitle = create_text(vmath.vector3(center_x, self.height * 0.71, 0), "CORPORATE COMBAT", 0.75 * self.scale, COLORS.muted)
+    self.buttons = {}
+    local first_y = self.height * 0.55
+    local step = self.button_height + self.button_gap
+    create_button(self, "battle", "BATTLE", first_y)
+    create_button(self, "garage", "GARAGE", first_y - step)
+    create_button(self, "exit", "EXIT", first_y - step * 2)
+    self.footer = create_text(vmath.vector3(center_x, self.height * 0.13, 0), "HELIOS DYNAMICS / VANGUARD GROUP", 0.55 * self.scale, COLORS.muted)
+
+    -- Small selector in the upper-right corner; the rest of the menu layout is unchanged.
+    local selector_w = 190 * self.scale
+    local selector_h = 30 * self.scale
+    local selector_x = self.width * 0.5 + math.min(self.width * 0.41, 245 * self.scale) - selector_w * 0.5
+    local selector_y = self.height * 0.91
+    self.server_button_box = create_box(vmath.vector3(selector_x, selector_y, 0.2), vmath.vector3(selector_w, selector_h, 0), COLORS.button)
+    self.server_button_label = create_text(vmath.vector3(selector_x, selector_y, 0.3), "SERVER: EU1  v", 0.55 * self.scale, COLORS.text)
+    self.server_status_label = create_text(vmath.vector3(selector_x, selector_y - 20 * self.scale, 0.3), "Users online: ...", 0.42 * self.scale, COLORS.muted)
+    self.server_selector = { x = selector_x, y = selector_y, w = selector_w, h = selector_h }
+    self.server_rows = {}
+    self.dropdown_open = false
+    log("Menu created. GUI size: " .. tostring(self.width) .. "x" .. tostring(self.height))
 end
 
-self.buttons = {}
-end
+local function set_status(self, message)
+    local id = message.server_id or self.selected_server_id or "?"
+    local users = tonumber(message.connected_users)
+    self.selected_server_id = id
+    if self.server_button_label then gui.set_text(self.server_button_label, "SERVER: " .. id .. "  v") end
+    if not message.connected then
+        gui.set_text(self.server_status_label, "Users online: unavailable")
+    elseif users and users >= 0 then
+        gui.set_text(self.server_status_label, "Users online: " .. tostring(users))
+    else
+        gui.set_text(self.server_status_label, "Users online: ...")
+    end
 end
 
+local function close_dropdown(self)
+    for _, row in ipairs(self.server_rows or {}) do destroy_node(row.label); destroy_node(row.box) end
+    self.server_rows = {}
+    self.dropdown_open = false
+end
+
+local function open_dropdown(self)
+    close_dropdown(self)
+    self.dropdown_open = true
+    local row_h = 27 * self.scale
+    local top_y = self.server_selector.y - self.server_selector.h * 0.5 - row_h * 0.5
+    for i, server in ipairs(SERVERS) do
+        local y = top_y - (i - 1) * row_h
+        local box = create_box(vmath.vector3(self.server_selector.x, y, 0.5), vmath.vector3(self.server_selector.w, row_h, 0), COLORS.button)
+        local label = create_text(vmath.vector3(self.server_selector.x, y, 0.6), server.id .. "  -  " .. (server.id == self.selected_server_id and "SELECTED" or "Select server"), 0.42 * self.scale, server.id == self.selected_server_id and COLORS.accent or COLORS.text)
+        table.insert(self.server_rows, { server_index = i, box = box, label = label })
+    end
+end
 
 local function activate_button(self, id)
-	if id == "battle" then
-		log("BATTLE selected")
-		msg.post("bootstrap:/scene_manager#scene_manager", "open_battle")
-
-	elseif id == "garage" then
-		log("GARAGE selected")
-		msg.post("bootstrap:/scene_manager#scene_manager", "open_garage")
-
-	elseif id == "exit" then
-		log("EXIT selected")
-		sys.exit(0)
-	end
+    if id == "battle" then
+        log("BATTLE selected")
+        msg.post("bootstrap:/scene_manager#scene_manager", "open_battle")
+    elseif id == "garage" then
+        log("GARAGE selected")
+        msg.post("bootstrap:/scene_manager#scene_manager", "open_garage")
+    elseif id == "exit" then
+        log("EXIT selected")
+        sys.exit(0)
+    end
 end
-
 
 function init(self)
-self.buttons = {}
-self.pressed_button = nil
-
-build_menu(self)
-
-msg.post(".", "acquire_input_focus")
-log("Input focus requested")
+    self.buttons = {}
+    self.pressed_button = nil
+    self.selected_server_id = "EU1"
+    self.status_poll_timer = 0
+    build_menu(self)
+    msg.post(".", "acquire_input_focus")
+    msg.post("bootstrap:/network_manager#network_manager", "network_get_server_status")
+    log("Input focus requested")
 end
 
-function final(self)
-destroy_menu(self)
+function final(self) destroy_menu(self) end
+
+function update(self, dt)
+    self.status_poll_timer = self.status_poll_timer + dt
+    if self.status_poll_timer >= STATUS_POLL_INTERVAL then
+        self.status_poll_timer = 0
+        msg.post("bootstrap:/network_manager#network_manager", "network_get_server_status")
+    end
+end
+
+function on_message(self, message_id, message, sender)
+    if message_id == hash("server_status_update") then
+        set_status(self, message)
+    end
 end
 
 function on_input(self, action_id, action)
-if action_id ~= hash("touch") then
-return false
-end
-
-if not action then
-log("Touch event received without action data")
-return false
-end
-
-if action.pressed then
-log("Mouse/button pressed at x="
-.. tostring(action.x) .. ", y=" .. tostring(action.y))
-
-self.pressed_button = nil
-
-for _, button in ipairs(self.buttons) do
-local hit = gui.pick_node(
-button.box,
-action.x,
-action.y
-)
-
-log("Hit test " .. button.id .. ": " .. tostring(hit))
-
-if hit then
-self.pressed_button = button.id
-log("Pressed button: " .. button.id)
-return true
-end
-end
-
-log("Click did not hit any button")
-return false
-end
-
-if action.released then
-log("Mouse/button released at x="
-.. tostring(action.x) .. ", y=" .. tostring(action.y))
-
-local selected_id = self.pressed_button
-self.pressed_button = nil
-
-if not selected_id then
-log("No button was pressed before release")
-return false
-end
-
-for _, button in ipairs(self.buttons) do
-if button.id == selected_id then
-local hit = gui.pick_node(
-button.box,
-action.x,
-action.y
-)
-
-if hit then
-activate_button(self, selected_id)
-return true
-else
-log("Released outside button: " .. selected_id)
-return false
-end
-end
-end
-end
-
-return false
+    if action_id ~= hash("touch") or not action then return false end
+    if action.pressed then
+        self.pressed_button = nil
+        if self.server_button_box and gui.pick_node(self.server_button_box, action.x, action.y) then
+            self.pressed_button = "server_selector"
+            return true
+        end
+        for _, row in ipairs(self.server_rows or {}) do
+            if gui.pick_node(row.box, action.x, action.y) then
+                self.pressed_button = "server:" .. tostring(row.server_index)
+                return true
+            end
+        end
+        for _, button in ipairs(self.buttons or {}) do
+            if gui.pick_node(button.box, action.x, action.y) then
+                self.pressed_button = button.id
+                return true
+            end
+        end
+        if self.dropdown_open then close_dropdown(self) end
+        return false
+    elseif action.released then
+        local pressed = self.pressed_button
+        self.pressed_button = nil
+        if not pressed then return false end
+        if pressed == "server_selector" and gui.pick_node(self.server_button_box, action.x, action.y) then
+            if self.dropdown_open then close_dropdown(self) else open_dropdown(self) end
+            return true
+        end
+        local index = tonumber(string.match(pressed, "^server:(%d+)$"))
+        if index then
+            for _, row in ipairs(self.server_rows or {}) do
+                if row.server_index == index and gui.pick_node(row.box, action.x, action.y) then
+                    self.selected_server_id = SERVERS[index].id
+                    close_dropdown(self)
+                    set_status(self, { server_id = self.selected_server_id, connected = false })
+                    msg.post("bootstrap:/network_manager#network_manager", "network_select_server", { server_index = index })
+                    return true
+                end
+            end
+        end
+        for _, button in ipairs(self.buttons or {}) do
+            if button.id == pressed and gui.pick_node(button.box, action.x, action.y) then
+                activate_button(self, pressed)
+                return true
+            end
+        end
+        return false
+    end
+    return false
 end

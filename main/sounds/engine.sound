@@ -1,0 +1,3 @@
+sound: "/main/sounds/engine.ogg"
+looping: 1
+gain: 0.25

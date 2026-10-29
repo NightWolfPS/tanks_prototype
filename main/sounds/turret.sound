@@ -1,1 +1,3 @@
-sound: ""
+sound: "/main/sounds/turret.ogg"
+looping: 1
+gain: 0.3

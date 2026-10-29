@@ -5,7 +5,42 @@
 
 go.property("spawn_delay", 0.5)
 
-local FACTORY_URL = msg.url("main:/tank_spawner#tank_collection_factory")
+local STANDARD_FACTORY_URL = msg.url("main:/tank_spawner#tank_collection_factory")
+local TWIN_BARREL_FACTORY_URL = msg.url("main:/tank_spawner#tank_twin_barrel_collection_factory")
+local GARAGE_SAVE_PATH = "garage.save"
+local DEFAULT_HULL_ID = "light_hull"
+local DEFAULT_TURRET_ID = "tank_turret"
+
+local function normalize_hull_id(value)
+    if value == "light_hull" then
+        return value
+    end
+    return DEFAULT_HULL_ID
+end
+
+local function normalize_turret_id(value)
+    if value == "twin_barrel_turret" then
+        return value
+    end
+    return DEFAULT_TURRET_ID
+end
+
+local function load_garage_loadout()
+    local ok, data = pcall(function()
+        return sys.load(GARAGE_SAVE_PATH)
+    end)
+    if not ok or type(data) ~= "table" then
+        return DEFAULT_HULL_ID, DEFAULT_TURRET_ID
+    end
+    return normalize_hull_id(data.hull_id), normalize_turret_id(data.turret_id)
+end
+
+local function factory_url_for_turret(turret_id)
+    if normalize_turret_id(turret_id) == "twin_barrel_turret" then
+        return TWIN_BARREL_FACTORY_URL
+    end
+    return STANDARD_FACTORY_URL
+end
 local CAMERA_URL = msg.url("main:/camera")
 local NETWORK_MANAGER_URL = msg.url("bootstrap:/network_manager#network_manager")
 
@@ -137,13 +172,16 @@ local function spawn_tank(self)
         return false
     end
 
+    local hull_id, turret_id = load_garage_loadout()
+    local selected_factory_url = factory_url_for_turret(turret_id)
+
     local ok_create, ids = pcall(function()
         return collectionfactory.create(
-        FACTORY_URL,
-        point.position,
-        point.rotation
-    )
-end)
+            selected_factory_url,
+            point.position,
+            point.rotation
+        )
+    end)
 
 if not ok_create or not ids then
     print("[SPAWNER] ERROR: Tank creation failed: " .. tostring(ids))
@@ -190,8 +228,17 @@ if not ok_message then
     .. tostring(message_error))
 end
 
+self.selected_hull_id = hull_id
+self.selected_turret_id = turret_id
+
+msg.post(NETWORK_MANAGER_URL, "network_set_loadout", {
+    hull_id = hull_id,
+    turret_id = turret_id
+})
+
 print("[SPAWNER] Local tank spawned at marker " .. point_index
-.. " (network player " .. tostring(self.network_player_id) .. ")")
+.. " (network player " .. tostring(self.network_player_id) .. ")"
+.. "; loadout=" .. hull_id .. "/" .. turret_id)
 
 return true
 end
@@ -335,6 +382,9 @@ end
 
 local position = vmath.vector3(state.x, state.y, 0)
 local rotation = vmath.quat()
+local remote_hull_id = normalize_hull_id(state.hull_id)
+local remote_turret_id = normalize_turret_id(state.turret_id)
+local selected_factory_url = factory_url_for_turret(remote_turret_id)
 
 local properties = {
     [TANK_ROOT_ID] = {
@@ -347,11 +397,11 @@ local properties = {
 
 local ok_create, ids = pcall(function()
     return collectionfactory.create(
-    FACTORY_URL,
-    position,
-    rotation,
-    properties
-)
+        selected_factory_url,
+        position,
+        rotation,
+        properties
+    )
 end)
 
 if not ok_create or not ids then
@@ -373,6 +423,8 @@ local remote = {
 player_id = player_id,
 root_id = root_id,
 turret_id = ids[TANK_TURRET_ID],
+hull_id = remote_hull_id,
+loadout_turret_id = remote_turret_id,
 ids = ids
 }
 
@@ -386,7 +438,8 @@ hide_name = false
 register_remote_instance(player_id, ids, root_id)
 update_remote_tank(self, player_id, state)
 
-print("[SPAWNER] Created remote tank for " .. player_id)
+print("[SPAWNER] Created remote tank for " .. player_id
+    .. " with loadout=" .. remote_hull_id .. "/" .. remote_turret_id)
 
 local pending = self.pending_remote_shots[player_id]
 
@@ -576,6 +629,7 @@ self.current_spawn_index = nil
 self.network_ready = false
 self.network_player_id = nil
 self.assigned_spawn_index = nil
+self.selected_hull_id, self.selected_turret_id = load_garage_loadout()
 
 self.has_spawned_once = false
 self.respawn_requested = false
@@ -591,7 +645,8 @@ self.spawn_remote_shot = spawn_remote_shot
 math.randomseed(os.time())
 
 print("[DEBUG] Spawner script URL: " .. tostring(msg.url()))
-print("[DEBUG] Factory URL: " .. tostring(FACTORY_URL))
+print("[DEBUG] Standard factory URL: " .. tostring(STANDARD_FACTORY_URL))
+print("[DEBUG] Twin-barrel factory URL: " .. tostring(TWIN_BARREL_FACTORY_URL))
 print("[DEBUG] Camera URL: " .. tostring(CAMERA_URL))
 
 msg.post(".", "acquire_input_focus")

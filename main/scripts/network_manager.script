@@ -3,17 +3,16 @@
 -- scoreboard, ping, server-authorized respawn and match chat.
 -- Defold 1.13.1 + extension-websocket
 
--- Server pool. The client probes all servers before opening the gameplay connection.
-local SERVER_URLS = {
-    "wss://tank-server-dfii.onrender.com",
-    "wss://tank-server-1.onrender.com",
-    "wss://tank-server-2.onrender.com",
-    "wss://tank-server-3.onrender.com",
-    "wss://tank-server.hostless.app",
-    "wss://tank-server.layero.dev"
+-- Manually selectable server pool. Keep labels and URLs in sync with the menu.
+local SERVERS = {
+    { id = "US1", url = "wss://tank-server-dfii.onrender.com" },
+    { id = "US2", url = "wss://tank-server-3.onrender.com" },
+    { id = "US3", url = "wss://tank-server.hostless.app" },
+    { id = "EU1", url = "wss://tank-server-1.onrender.com" },
+    { id = "EU2", url = "wss://tank-server.layero.app" },
+    { id = "AS1", url = "wss://tank-server-2.onrender.com" }
 }
-local FALLBACK_SERVER_URL = SERVER_URLS[2]
-local PROBE_TIMEOUT = 5.0
+local DEFAULT_SERVER_INDEX = 3 -- EU1
 local STATE_SEND_INTERVAL = 0.05
 
 -- Forward declarations.
@@ -293,6 +292,8 @@ x = player.x,
 y = player.y,
 body_angle = player.body_angle or 0,
 turret_angle = player.turret_angle or 0,
+hull_id = player.hull_id or "light_hull",
+turret_id = player.turret_id or "tank_turret",
 state_seq = player.state_seq or 0
 })
 end
@@ -321,6 +322,8 @@ x = nil,
 y = nil,
 body_angle = 0,
 turret_angle = 0,
+hull_id = "light_hull",
+turret_id = "tank_turret",
 state_seq = 0,
 life_state = "alive"
 }
@@ -345,6 +348,13 @@ end
 
 if is_number(player.turret_angle) then
 old.turret_angle = player.turret_angle
+end
+
+if player.hull_id == "light_hull" then
+old.hull_id = player.hull_id
+end
+if player.turret_id == "tank_turret" or player.turret_id == "twin_barrel_turret" then
+old.turret_id = player.turret_id
 end
 
 if is_number(player.state_seq) then
@@ -598,6 +608,8 @@ x = message.x,
 y = message.y,
 body_angle = message.body_angle,
 turret_angle = message.turret_angle,
+hull_id = message.hull_id,
+turret_id = message.turret_id,
 state_seq = message.state_seq,
 life_state = "alive"
 })
@@ -877,197 +889,95 @@ end
 end
 
 -- ---------------------------------------------------------------------------
--- Server discovery
--- ---------------------------------------------------------------------------
-
-local function close_probe(self, connection)
-    local probe = self.probe_connections and self.probe_connections[connection]
-    if not probe or probe.done then
-        return
-    end
-
-    probe.done = true
-    self.probe_completed = (self.probe_completed or 0) + 1
-
-    pcall(function()
-        websocket.disconnect(connection)
-    end)
-
-    if self.probe_completed >= #SERVER_URLS then
-        local candidates = {}
-
-        for _, item in pairs(self.probe_results or {}) do
-            if item.ok then
-                table.insert(candidates, item)
-            end
-        end
-
-        table.sort(candidates, function(a, b)
-            local a_capacity = math.max(1, a.max_players or 6)
-            local b_capacity = math.max(1, b.max_players or 6)
-            local a_load = (a.players_in_battle or a.max_players or 6) / a_capacity
-            local b_load = (b.players_in_battle or b.max_players or 6) / b_capacity
-
-            if a_load ~= b_load then
-                return a_load < b_load
-            end
-            return (a.response_ms or 999999) < (b.response_ms or 999999)
-        end)
-
-        local selected = candidates[1]
-        local url = selected and selected.url or FALLBACK_SERVER_URL
-
-        self.selected_server_url = url
-        self.probing_servers = false
-        log("Server selected: " .. url
-            .. (selected and (" | battle players=" .. tostring(selected.players_in_battle)
-                .. "/" .. tostring(selected.max_players)
-                .. " | response=" .. tostring(selected.response_ms) .. " ms") or " | no status response; using fallback"))
-
-        self.connection = websocket.connect(url, {
-            timeout = 3000
-        }, websocket_callback)
-    end
-end
-
-local function start_server_probes(self)
-    self.probing_servers = true
-    self.probe_elapsed = 0
-    self.probe_completed = 0
-    self.probe_connections = {}
-    self.probe_results = {}
-
-    for _, url in ipairs(SERVER_URLS) do
-        local started_at = os.clock()
-        local connection = websocket.connect(url, {
-            timeout = 3000
-        }, websocket_callback)
-
-        if connection then
-            self.probe_connections[connection] = {
-                url = url,
-                started_at = started_at,
-                done = false,
-                connected = false
-            }
-        else
-            self.probe_results[url] = {
-                url = url,
-                ok = false
-            }
-            self.probe_completed = self.probe_completed + 1
-        end
-    end
-
-    if self.probe_completed >= #SERVER_URLS then
-        self.probing_servers = false
-        self.connection = websocket.connect(FALLBACK_SERVER_URL, {
-            timeout = 3000
-        }, websocket_callback)
-    end
-end
-
--- ---------------------------------------------------------------------------
 -- WebSocket callback
 -- ---------------------------------------------------------------------------
 
 websocket_callback = function(self, connection, data)
-    local probe = self.probe_connections and self.probe_connections[connection]
-    if probe then
-        if probe.done then
-            return
-        end
-
-        if data.event == websocket.EVENT_CONNECTED then
-            probe.connected = true
-            local ok, err = pcall(function()
-                websocket.send(connection, json.encode({ type = "server_status" }), {
-                    type = websocket.DATA_TYPE_TEXT
-                })
-            end)
-            if not ok then
-                log("Probe request failed for " .. probe.url .. ": " .. tostring(err))
-                self.probe_results[probe.url] = { url = probe.url, ok = false }
-                close_probe(self, connection)
-            end
-
-        elseif data.event == websocket.EVENT_MESSAGE then
-            local ok, decoded = pcall(json.decode, data.message)
-            if ok and type(decoded) == "table" and decoded.type == "server_status" then
-                local response_ms = math.max(0, math.floor((self.probe_elapsed or 0) * 1000 + 0.5))
-                self.probe_results[probe.url] = {
-                    url = probe.url,
-                    ok = true,
-                    players_in_battle = tonumber(decoded.players_in_battle) or 6,
-                    max_players = tonumber(decoded.max_players) or 6,
-                    available_slots = tonumber(decoded.available_slots) or 0,
-                    response_ms = response_ms
-                }
-                close_probe(self, connection)
-            elseif not ok then
-                log("Ignored malformed probe response from " .. probe.url)
-            end
-            -- Ignore the ordinary welcome message; wait for server_status.
-
-        elseif data.event == websocket.EVENT_ERROR or data.event == websocket.EVENT_DISCONNECTED then
-            self.probe_results[probe.url] = { url = probe.url, ok = false }
-            close_probe(self, connection)
-        end
+    -- Ignore callbacks from a connection that has already been replaced.
+    if self.connection ~= connection then
         return
     end
 
-if data.event == websocket.EVENT_CONNECTED then
-self.connection = connection
-self.connected = true
+    if data.event == websocket.EVENT_CONNECTED then
+        self.connected = true
+        log("Connected to " .. tostring(self.selected_server_id)
+            .. " (" .. tostring(self.selected_server_url) .. ")")
+        if self.scene_name == "battle" and self.scene_socket then
+            send_enter_battle(self)
+        end
+        send_json(self, { type = "server_status" })
 
-log("Connected to " .. tostring(self.selected_server_url or FALLBACK_SERVER_URL))
+    elseif data.event == websocket.EVENT_DISCONNECTED then
+        if self.connection == connection then self.connection = nil end
+        self.connected = false
+        self.player_id = nil
+        self.spawn_index = nil
+        self.local_state = nil
+        self.in_battle = false
+        self.enter_battle_pending = false
+        self.state_timer = 0
+        clear_remote_players(self)
+        post_to_spawner(self, "network_disconnected")
+        log("Disconnected: " .. tostring(data.code or data.message or "no reason"))
+        self.last_connected_users = nil
+        if self.menu_sender then
+            msg.post(self.menu_sender, "server_status_update", {
+                server_id = self.selected_server_id or "?",
+                connected_users = -1,
+                connected = false
+            })
+        end
 
-if self.scene_name == "battle" and self.scene_socket then
-send_enter_battle(self)
+    elseif data.event == websocket.EVENT_ERROR then
+        log("WebSocket error: " .. tostring(data.message))
+        if data.handshake_response then
+            log("Handshake status: " .. tostring(data.handshake_response.status))
+        end
+
+    elseif data.event == websocket.EVENT_MESSAGE then
+        local ok, decoded = pcall(json.decode, data.message)
+        if not ok then
+            log("JSON decode failed: " .. tostring(decoded))
+            return
+        end
+        if type(decoded) == "table" and decoded.type == "server_status" then
+            self.last_connected_users = tonumber(decoded.connected_users) or 0
+            if self.menu_sender then
+                msg.post(self.menu_sender, "server_status_update", {
+                    server_id = self.selected_server_id or "?",
+                    connected_users = self.last_connected_users,
+                    connected = true
+                })
+            end
+            return
+        end
+        handle_server_message(self, decoded)
+    end
 end
 
-elseif data.event == websocket.EVENT_DISCONNECTED then
-if self.connection == connection then
-self.connection = nil
-end
+local function connect_selected_server(self)
+    local server = SERVERS[self.selected_server_index]
+    if not server then return false end
 
-self.connected = false
-self.player_id = nil
-self.spawn_index = nil
-self.local_state = nil
-self.in_battle = false
-self.enter_battle_pending = false
-self.state_timer = 0
+    self.selected_server_id = server.id
+    self.selected_server_url = server.url
+    self.last_connected_users = nil
+    self.connected = false
+    self.player_id = nil
+    self.spawn_index = nil
+    self.in_battle = false
+    self.enter_battle_pending = false
+    self.local_state = nil
+    self.state_timer = 0
 
-clear_remote_players(self)
-
-post_to_spawner(self, "network_disconnected")
-
-log(
-"Disconnected: "
-.. tostring(data.code or data.message or "no reason")
-)
-
-elseif data.event == websocket.EVENT_ERROR then
-log("WebSocket error: " .. tostring(data.message))
-
-if data.handshake_response then
-log(
-"Handshake status: "
-.. tostring(data.handshake_response.status)
-)
-end
-
-elseif data.event == websocket.EVENT_MESSAGE then
-local ok, decoded = pcall(json.decode, data.message)
-
-if not ok then
-log("JSON decode failed: " .. tostring(decoded))
-return
-end
-
-handle_server_message(self, decoded)
-end
+    local connection = websocket.connect(server.url, { timeout = 5000 }, websocket_callback)
+    self.connection = connection
+    if not connection then
+        log("Could not start connection to " .. server.id)
+        return false
+    end
+    log("Connecting to selected server " .. server.id .. ": " .. server.url)
+    return true
 end
 
 -- ---------------------------------------------------------------------------
@@ -1075,48 +985,37 @@ end
 -- ---------------------------------------------------------------------------
 
 function init(self)
-self.scene_socket = nil
-self.scene_name = "none"
-
-self.connection = nil
-self.connected = false
-self.selected_server_url = nil
-self.probing_servers = false
-self.probe_elapsed = 0
-self.probe_completed = 0
-self.probe_connections = {}
-self.probe_results = {}
-
-self.player_id = nil
-self.spawn_index = nil
-
-self.in_battle = false
-self.enter_battle_pending = false
-
-self.remote_players = {}
-self.remote_instances = {}
-
-self.local_state = nil
-self.state_timer = 0
-
-log("Checking availability of " .. tostring(#SERVER_URLS) .. " servers")
-start_server_probes(self)
+    self.scene_socket = nil
+    self.scene_name = "none"
+    self.connection = nil
+    self.connected = false
+    self.selected_server_index = DEFAULT_SERVER_INDEX
+    self.selected_server_id = SERVERS[DEFAULT_SERVER_INDEX].id
+    self.selected_server_url = SERVERS[DEFAULT_SERVER_INDEX].url
+    self.menu_sender = nil
+    self.last_connected_users = nil
+    self.player_id = nil
+    self.spawn_index = nil
+    self.in_battle = false
+    self.enter_battle_pending = false
+    self.remote_players = {}
+    self.remote_instances = {}
+    self.local_state = nil
+    self.state_timer = 0
+    self.hull_id = "light_hull"
+    self.turret_id = "tank_turret"
+    local loadout_ok, loadout = pcall(function() return sys.load("garage.save") end)
+    if loadout_ok and type(loadout) == "table" then
+        if loadout.hull_id == "light_hull" then self.hull_id = loadout.hull_id end
+        if loadout.turret_id == "tank_turret" or loadout.turret_id == "twin_barrel_turret" then
+            self.turret_id = loadout.turret_id
+        end
+    end
+    log("Connecting to default server " .. self.selected_server_id)
+    connect_selected_server(self)
 end
 
 function update(self, dt)
-if self.probing_servers then
-    self.probe_elapsed = (self.probe_elapsed or 0) + dt
-    if self.probe_elapsed >= PROBE_TIMEOUT then
-        -- Mark every unfinished probe as failed. The last completion selects a server.
-        for connection, probe in pairs(self.probe_connections or {}) do
-            if not probe.done then
-                self.probe_results[probe.url] = { url = probe.url, ok = false }
-                close_probe(self, connection)
-            end
-        end
-    end
-end
-
 if not self.connected
 or not self.in_battle
 or self.scene_name ~= "battle"
@@ -1137,7 +1036,9 @@ type = "state",
 x = self.local_state.x,
 y = self.local_state.y,
 body_angle = self.local_state.body_angle,
-turret_angle = self.local_state.turret_angle
+turret_angle = self.local_state.turret_angle,
+hull_id = self.local_state.hull_id or self.hull_id or "light_hull",
+turret_id = self.local_state.turret_id or self.turret_id or "tank_turret"
 })
 end
 
@@ -1153,7 +1054,57 @@ unregister_remote_instance(self, message)
 return
 end
 
-if message_id == hash("network_scene_changed") then
+if message_id == hash("network_get_server_status") then
+    self.menu_sender = sender
+    if self.connected then
+        send_json(self, { type = "server_status" })
+        msg.post(sender, "server_status_update", {
+            server_id = self.selected_server_id,
+            connected_users = self.last_connected_users or 0,
+            connected = true
+        })
+    else
+        msg.post(sender, "server_status_update", {
+            server_id = self.selected_server_id or "?",
+            connected_users = -1,
+            connected = false
+        })
+    end
+    return
+
+elseif message_id == hash("network_select_server") then
+    local requested_index = tonumber(message.server_index)
+    if not requested_index or requested_index < 1 or requested_index > #SERVERS then
+        log("Ignored invalid server index: " .. tostring(message.server_index))
+        return
+    end
+    requested_index = math.floor(requested_index)
+    if requested_index == self.selected_server_index then
+        if self.connected then send_json(self, { type = "server_status" }) end
+        return
+    end
+    if self.in_battle or self.enter_battle_pending then
+        send_leave_battle(self)
+    end
+    clear_remote_players(self)
+    local old_connection = self.connection
+    self.connection = nil
+    self.connected = false
+    if old_connection then
+        pcall(function() websocket.disconnect(old_connection) end)
+    end
+    self.selected_server_index = requested_index
+    connect_selected_server(self)
+    if self.menu_sender then
+        msg.post(self.menu_sender, "server_status_update", {
+            server_id = SERVERS[requested_index].id,
+            connected_users = -1,
+            connected = false
+        })
+    end
+    return
+
+elseif message_id == hash("network_scene_changed") then
 local new_scene_name = message.scene or "none"
 local new_socket = nil
 
@@ -1218,8 +1169,21 @@ self.local_state = {
 x = message.x or 0,
 y = message.y or 0,
 body_angle = message.body_angle or 0,
-turret_angle = message.turret_angle or 0
+turret_angle = message.turret_angle or 0,
+hull_id = self.hull_id or "light_hull",
+turret_id = self.turret_id or "tank_turret"
 }
+
+elseif message_id == hash("network_set_loadout") then
+if message.hull_id == "light_hull" then self.hull_id = message.hull_id end
+if message.turret_id == "tank_turret" or message.turret_id == "twin_barrel_turret" then
+    self.turret_id = message.turret_id
+end
+if self.local_state then
+    self.local_state.hull_id = self.hull_id
+    self.local_state.turret_id = self.turret_id
+end
+log("Loadout selected: " .. tostring(self.hull_id) .. "/" .. tostring(self.turret_id))
 
 elseif message_id == hash("network_chat_send") then
 send_chat_message(self, message.text)

@@ -1,24 +1,5 @@
 name: "tank"
 instances {
-  id: "tank"
-  prototype: "/main/objects/hulls/tank.go"
-  children: "tank_name"
-  children: "twin_barrel_turret"
-  component_properties {
-    id: "tank_controller"
-    properties {
-      id: "move_speed"
-      value: "90.0"
-      type: PROPERTY_TYPE_NUMBER
-    }
-    properties {
-      id: "turn_speed"
-      value: "60.0"
-      type: PROPERTY_TYPE_NUMBER
-    }
-  }
-}
-instances {
   id: "tank_name"
   prototype: "/main/objects/tank_name.go"
   position {
@@ -29,12 +10,25 @@ instances {
     y: 0.8
   }
 }
-instances {
-  id: "twin_barrel_turret"
-  prototype: "/main/objects/turrets/twin_barrel_turret.go"
-  position {
-    y: -10.0
-    z: 0.5
-  }
-}
 scale_along_z: 0
+embedded_instances {
+  id: "tank"
+  children: "tank_name"
+  data: "embedded_components {\n"
+  "  id: \"hull_collectionfactory\"\n"
+  "  type: \"collectionfactory\"\n"
+  "  data: \"prototype: \\\"/main/objects/hulls/light_hull.collection\\\"\\n"
+  "load_dynamically: true\\n"
+  "dynamic_prototype: true\\n"
+  "\"\n"
+  "}\n"
+  "embedded_components {\n"
+  "  id: \"turret_factory\"\n"
+  "  type: \"factory\"\n"
+  "  data: \"prototype: \\\"/main/objects/turrets/tank_turret.go\\\"\\n"
+  "load_dynamically: true\\n"
+  "dynamic_prototype: true\\n"
+  "\"\n"
+  "}\n"
+  ""
+}

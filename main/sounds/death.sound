@@ -1,1 +1,2 @@
-sound: ""
+sound: "/main/sounds/death.ogg"
+gain: 0.6
