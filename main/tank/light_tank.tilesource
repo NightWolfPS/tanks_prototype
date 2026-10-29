@@ -1,0 +1,10 @@
+image: "/main/assets/tank/light_tank1.png"
+tile_width: 361
+tile_height: 522
+collision_groups: "tank"
+animations {
+  id: "anim"
+  start_tile: 1
+  end_tile: 1
+}
+extrude_borders: 2
