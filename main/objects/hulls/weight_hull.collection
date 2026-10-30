@@ -1,0 +1,14 @@
+name: "weight_hull"
+instances {
+  id: "weight_hull"
+  prototype: "/main/objects/hulls/weight_hull.go"
+  children: "pivot"
+}
+instances {
+  id: "pivot"
+  prototype: "/main/objects/pivot.go"
+  position {
+    y: 13.0
+  }
+}
+scale_along_z: 0

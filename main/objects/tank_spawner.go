@@ -10,5 +10,7 @@ embedded_components {
   id: "tank_collection_factory"
   type: "collectionfactory"
   data: "prototype: \"/main/objects/tank.collection\"\n"
+  "load_dynamically: true\n"
+  "dynamic_prototype: true\n"
   ""
 }

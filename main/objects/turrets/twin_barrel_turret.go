@@ -37,7 +37,7 @@ embedded_components {
   ""
   position {
     x: 2.0
-    y: 23.0
+    y: 24.0
   }
   scale {
     x: 0.2
@@ -53,6 +53,6 @@ embedded_components {
 embedded_components {
   id: "projectile_factory"
   type: "factory"
-  data: "prototype: \"/main/objects/projectile.go\"\n"
+  data: "prototype: \"/main/objects/projectiles/twin_barrel_turret_projectile.go\"\n"
   ""
 }

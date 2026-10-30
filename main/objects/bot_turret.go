@@ -12,6 +12,6 @@ embedded_components {
 embedded_components {
   id: "projectile_factory"
   type: "factory"
-  data: "prototype: \"/main/objects/projectile.go\"\n"
+  data: "prototype: \"/main/objects/projectiles/tank_turret_projectile.go\"\n"
   ""
 }

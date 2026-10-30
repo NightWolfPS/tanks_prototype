@@ -1,14 +1,14 @@
 components {
   id: "tank_controller"
-  component: "/main/scripts/tank_controller.script"
+  component: "/main/scripts/light_hull_controller.script"
   properties {
     id: "move_speed"
-    value: "98.0"
+    value: "120.0"
     type: PROPERTY_TYPE_NUMBER
   }
   properties {
     id: "turn_speed"
-    value: "45.0"
+    value: "65.0"
     type: PROPERTY_TYPE_NUMBER
   }
   properties {

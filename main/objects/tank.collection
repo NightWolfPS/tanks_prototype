@@ -15,7 +15,7 @@ embedded_instances {
   id: "tank"
   children: "tank_name"
   data: "embedded_components {\n"
-  "  id: \"hull_collectionfactory\"\n"
+  "  id: \"hull_collection_factory\"\n"
   "  type: \"collectionfactory\"\n"
   "  data: \"prototype: \\\"/main/objects/hulls/light_hull.collection\\\"\\n"
   "load_dynamically: true\\n"

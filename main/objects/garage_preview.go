@@ -26,3 +26,11 @@ embedded_components {
   "dynamic_prototype: true\n"
   ""
 }
+embedded_components {
+  id: "weight_hull_factory"
+  type: "factory"
+  data: "prototype: \"/main/objects/hulls/weight_hull_prev.go\"\n"
+  "load_dynamically: true\n"
+  "dynamic_prototype: true\n"
+  ""
+}
