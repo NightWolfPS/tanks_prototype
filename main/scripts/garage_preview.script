@@ -5,6 +5,9 @@ local HULLS = {
 	light_hull = {
 		factory = "#light_hull_factory",
 	},
+	weight_hull = {
+		factory = "#weight_hull_factory",
+	},
 }
 
 local TURRETS = {

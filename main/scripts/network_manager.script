@@ -350,8 +350,11 @@ if is_number(player.turret_angle) then
 old.turret_angle = player.turret_angle
 end
 
-if player.hull_id == "light_hull" then
-old.hull_id = player.hull_id
+-- Accept any valid hull ID.
+-- The available hulls are defined by resources, not by this script.
+if type(player.hull_id) == "string"
+and player.hull_id:match("^[%w_%-]+$") then
+    old.hull_id = player.hull_id
 end
 if player.turret_id == "tank_turret" or player.turret_id == "twin_barrel_turret" then
 old.turret_id = player.turret_id
@@ -1005,15 +1008,31 @@ function init(self)
     self.remote_instances = {}
     self.local_state = nil
     self.state_timer = 0
+
     self.hull_id = "light_hull"
     self.turret_id = "tank_turret"
-    local loadout_ok, loadout = pcall(function() return sys.load("garage.save") end)
+
+    local loadout_ok, loadout = pcall(function()
+        return sys.load("garage.save")
+    end)
+
     if loadout_ok and type(loadout) == "table" then
-        if loadout.hull_id == "light_hull" then self.hull_id = loadout.hull_id end
-        if loadout.turret_id == "tank_turret" or loadout.turret_id == "twin_barrel_turret" then
+        if type(loadout.hull_id) == "string"
+        and loadout.hull_id:match("^[%w_%-]+$") then
+            self.hull_id = loadout.hull_id
+        end
+
+        if type(loadout.turret_id) == "string"
+        and loadout.turret_id:match("^[%w_%-]+$") then
             self.turret_id = loadout.turret_id
         end
     end
+
+    log("Initial loadout: "
+    .. tostring(self.hull_id)
+    .. "/"
+    .. tostring(self.turret_id))
+
     log("Connecting to default server " .. self.selected_server_id)
     connect_selected_server(self)
 end
@@ -1046,230 +1065,263 @@ turret_id = self.local_state.turret_id or self.turret_id or "tank_turret"
 end
 
 function on_message(self, message_id, message, sender)
--- Registration messages come from tank_spawner in the gameplay
--- collection. These messages contain IDs only; no instance access here.
-if message_id == hash("network_remote_instance_registered") then
-register_remote_instance(self, message)
-return
+    -- Registration messages come from tank_spawner in the gameplay
+    -- collection. These messages contain IDs only; no instance access here.
+    if message_id == hash("network_remote_instance_registered") then
+        register_remote_instance(self, message)
+        return
 
-elseif message_id == hash("network_remote_instance_unregistered") then
-unregister_remote_instance(self, message)
-return
-end
-
-if message_id == hash("network_get_server_status") then
-    self.menu_sender = sender
-    if self.connected then
-        send_json(self, { type = "server_status" })
-        msg.post(sender, "server_status_update", {
-            server_id = self.selected_server_id,
-            connected_users = self.last_connected_users or 0,
-            connected = true
-        })
-    else
-        msg.post(sender, "server_status_update", {
-            server_id = self.selected_server_id or "?",
-            connected_users = -1,
-            connected = false
-        })
-    end
-    return
-
-elseif message_id == hash("network_select_server") then
-    local requested_index = tonumber(message.server_index)
-    if not requested_index or requested_index < 1 or requested_index > #SERVERS then
-        log("Ignored invalid server index: " .. tostring(message.server_index))
+    elseif message_id == hash("network_remote_instance_unregistered") then
+        unregister_remote_instance(self, message)
         return
     end
-    requested_index = math.floor(requested_index)
-    if requested_index == self.selected_server_index then
-        if self.connected then send_json(self, { type = "server_status" }) end
+
+    if message_id == hash("network_get_server_status") then
+        self.menu_sender = sender
+
+        if self.connected then
+            send_json(self, { type = "server_status" })
+
+            msg.post(sender, "server_status_update", {
+                server_id = self.selected_server_id,
+                connected_users = self.last_connected_users or 0,
+                connected = true
+            })
+        else
+            msg.post(sender, "server_status_update", {
+                server_id = self.selected_server_id or "?",
+                connected_users = -1,
+                connected = false
+            })
+        end
+
         return
-    end
-    if self.in_battle or self.enter_battle_pending then
-        send_leave_battle(self)
-    end
-    clear_remote_players(self)
-    local old_connection = self.connection
-    self.connection = nil
-    self.connected = false
-    if old_connection then
-        pcall(function() websocket.disconnect(old_connection) end)
-    end
-    self.selected_server_index = requested_index
-    connect_selected_server(self)
-    if self.menu_sender then
-        msg.post(self.menu_sender, "server_status_update", {
-            server_id = SERVERS[requested_index].id,
-            connected_users = -1,
-            connected = false
-        })
-    end
+
+    elseif message_id == hash("network_select_server") then
+        local requested_index = tonumber(message.server_index)
+
+        if not requested_index
+        or requested_index < 1
+        or requested_index > #SERVERS then
+            log("Ignored invalid server index: " .. tostring(message.server_index))
+            return
+        end
+
+        requested_index = math.floor(requested_index)
+
+        if requested_index == self.selected_server_index then
+            if self.connected then
+                send_json(self, { type = "server_status" })
+            end
+            return
+        end
+
+        if self.in_battle or self.enter_battle_pending then
+            send_leave_battle(self)
+        end
+
+        clear_remote_players(self)
+
+        local old_connection = self.connection
+        self.connection = nil
+        self.connected = false
+
+        if old_connection then
+            pcall(function()
+                websocket.disconnect(old_connection)
+            end)
+        end
+
+        self.selected_server_index = requested_index
+        connect_selected_server(self)
+
+        if self.menu_sender then
+            msg.post(self.menu_sender, "server_status_update", {
+                server_id = SERVERS[requested_index].id,
+                connected_users = -1,
+                connected = false
+            })
+        end
+
+        return
+
+    elseif message_id == hash("network_scene_changed") then
+        local new_scene_name = message.scene or "none"
+        local new_socket = nil
+
+        if new_scene_name == "battle"
+        and type(message.socket) == "string"
+        and message.socket ~= "" then
+            new_socket = message.socket
+        end
+
+        local was_battle_scene =
+        self.scene_name == "battle"
+        and self.scene_socket ~= nil
+
+        local is_battle_scene =
+        new_scene_name == "battle"
+        and new_socket ~= nil
+
+        local socket_changed = self.scene_socket ~= new_socket
+        local scene_changed = self.scene_name ~= new_scene_name
+
+        if was_battle_scene
+        and (not is_battle_scene or socket_changed) then
+            send_leave_battle(self)
+            clear_remote_players(self)
+        end
+
+        self.scene_name = new_scene_name
+        self.scene_socket = new_socket
+
+        if socket_changed or scene_changed then
+            self.local_state = nil
+            self.state_timer = 0
+        end
+
+        if is_battle_scene then
+            if socket_changed then
+                clear_remote_players(self)
+            end
+
+            if self.connected then
+                send_enter_battle(self)
+            end
+        else
+            self.local_state = nil
+            self.state_timer = 0
+        end
+
+        log(
+        "Active scene route: " .. tostring(self.scene_name)
+        .. ", socket: " .. tostring(self.scene_socket)
+    )
+
     return
-
-elseif message_id == hash("network_scene_changed") then
-local new_scene_name = message.scene or "none"
-local new_socket = nil
-
-if new_scene_name == "battle"
-and type(message.socket) == "string"
-and message.socket ~= "" then
-new_socket = message.socket
-end
-
-local was_battle_scene =
-self.scene_name == "battle"
-and self.scene_socket ~= nil
-
-local is_battle_scene =
-new_scene_name == "battle"
-and new_socket ~= nil
-
-local socket_changed = self.scene_socket ~= new_socket
-local scene_changed = self.scene_name ~= new_scene_name
-
-if was_battle_scene
-and (not is_battle_scene or socket_changed) then
-send_leave_battle(self)
-clear_remote_players(self)
-end
-
-self.scene_name = new_scene_name
-self.scene_socket = new_socket
-
-if socket_changed or scene_changed then
-self.local_state = nil
-self.state_timer = 0
-end
-
-if is_battle_scene then
-if socket_changed then
-clear_remote_players(self)
-end
-
-if self.connected then
-send_enter_battle(self)
-end
-else
-self.local_state = nil
-self.state_timer = 0
-end
-
-log(
-"Active scene route: " .. tostring(self.scene_name)
-.. ", socket: " .. tostring(self.scene_socket)
-)
-
-return
 end
 
 if message_id == hash("network_set_state") then
-if not self.in_battle or self.scene_name ~= "battle" then
-return
-end
+    if not self.in_battle or self.scene_name ~= "battle" then
+        return
+    end
 
-self.local_state = {
-x = message.x or 0,
-y = message.y or 0,
-body_angle = message.body_angle or 0,
-turret_angle = message.turret_angle or 0,
-hull_id = self.hull_id or "light_hull",
-turret_id = self.turret_id or "tank_turret"
-}
+    self.local_state = {
+        x = message.x or 0,
+        y = message.y or 0,
+        body_angle = message.body_angle or 0,
+        turret_angle = message.turret_angle or 0,
+        hull_id = self.hull_id or "light_hull",
+        turret_id = self.turret_id or "tank_turret"
+    }
 
 elseif message_id == hash("network_set_loadout") then
-if message.hull_id == "light_hull" then self.hull_id = message.hull_id end
-if message.turret_id == "tank_turret" or message.turret_id == "twin_barrel_turret" then
-    self.turret_id = message.turret_id
+
+    -- Accept any valid hull ID.
+    if type(message.hull_id) == "string"
+    and message.hull_id:match("^[%w_%-]+$") then
+        self.hull_id = message.hull_id
+    end
+
+    -- Accept any valid turret ID.
+    if type(message.turret_id) == "string"
+    and message.turret_id:match("^[%w_%-]+$") then
+        self.turret_id = message.turret_id
+    end
+
+    if self.local_state then
+        self.local_state.hull_id = self.hull_id
+        self.local_state.turret_id = self.turret_id
+    end
+
     log("LOADOUT UPDATE: "
     .. tostring(self.hull_id)
     .. "/"
     .. tostring(self.turret_id))
-end
-if self.local_state then
-    self.local_state.hull_id = self.hull_id
-    self.local_state.turret_id = self.turret_id
-end
-log("Loadout selected: " .. tostring(self.hull_id) .. "/" .. tostring(self.turret_id))
+
+    log("Loadout selected: "
+    .. tostring(self.hull_id)
+    .. "/"
+    .. tostring(self.turret_id))
 
 elseif message_id == hash("network_chat_send") then
-send_chat_message(self, message.text)
+    send_chat_message(self, message.text)
 
 elseif message_id == hash("network_player_inactive") then
-if self.connected and self.in_battle then
-send_json(self, {
-type = "player_inactive"
-})
-end
+    if self.connected and self.in_battle then
+        send_json(self, {
+            type = "player_inactive"
+        })
+    end
 
-self.local_state = nil
-self.state_timer = 0
+    self.local_state = nil
+    self.state_timer = 0
 
 elseif message_id == hash("network_request_respawn") then
-if self.connected and self.in_battle then
-send_json(self, {
-type = "player_respawn"
-})
-end
+    if self.connected and self.in_battle then
+        send_json(self, {
+            type = "player_respawn"
+        })
+    end
 
 elseif message_id == hash("network_send_shot") then
-if not self.connected or not self.in_battle then
-return
-end
+    if not self.connected or not self.in_battle then
+        return
+    end
 
-send_json(self, {
-type = "shot",
-x = message.x or 0,
-y = message.y or 0,
-z = message.z or 0.5,
-angle = message.angle or 0,
-shot_id = message.shot_id or ""
-})
+    send_json(self, {
+        type = "shot",
+        x = message.x or 0,
+        y = message.y or 0,
+        z = message.z or 0.5,
+        angle = message.angle or 0,
+        shot_id = message.shot_id or ""
+    })
 
 elseif message_id == hash("network_player_killed") then
--- The server decides kill credit using registered projectile hits.
-if self.connected and self.in_battle then
-send_json(self, {
-type = "player_killed",
-killer_id = type(message.killer_id) == "string"
-and message.killer_id or ""
-})
-end
+    -- The server decides kill credit using registered projectile hits.
+    if self.connected and self.in_battle then
+        send_json(self, {
+            type = "player_killed",
+            killer_id = type(message.killer_id) == "string"
+            and message.killer_id or ""
+        })
+    end
 
 elseif message_id == hash("network_send_hit") then
-if not self.connected or not self.in_battle then
-return
-end
+    if not self.connected or not self.in_battle then
+        return
+    end
 
-local target_player_id = find_remote_player_for_object(
-self,
-message.target_gameobject_id
+    local target_player_id = find_remote_player_for_object(
+    self,
+    message.target_gameobject_id
 )
 
 if not target_player_id then
-log("Hit not sent: target object ID is not registered")
-return
+    log("Hit not sent: target object ID is not registered")
+    return
 end
 
 send_json(self, {
-type = "projectile_hit",
-target_player_id = target_player_id,
-damage = message.damage or 0,
-x = message.x or 0,
-y = message.y or 0,
-shot_id = message.shot_id or ""
+    type = "projectile_hit",
+    target_player_id = target_player_id,
+    damage = message.damage or 0,
+    x = message.x or 0,
+    y = message.y or 0,
+    shot_id = message.shot_id or ""
 })
 
 elseif message_id == hash("network_disconnect") then
 if self.in_battle or self.enter_battle_pending then
-send_leave_battle(self)
+    send_leave_battle(self)
 end
 
 clear_remote_players(self)
 
 if self.connection ~= nil then
-websocket.disconnect(self.connection)
-self.connection = nil
+    websocket.disconnect(self.connection)
+    self.connection = nil
 end
 
 self.connected = false
