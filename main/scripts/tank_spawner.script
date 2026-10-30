@@ -12,6 +12,7 @@ local DEFAULT_TURRET_ID = "tank_turret"
 
 local HULL_PROTOTYPES = {
     light_hull = "/main/objects/hulls/light_hull.collectionc",
+    weight_hull = "/main/objects/hulls/weight_hull.collectionc",
 }
 
 local TURRET_PROTOTYPES = {
@@ -65,7 +66,6 @@ local GROUP_TANK = hash("tank")
 local function create_configured_tank(self, position, rotation, hull_id, turret_id, is_local, on_complete)
     hull_id = normalize_hull_id(hull_id)
     turret_id = normalize_turret_id(turret_id)
-
     local ok_shell, shell_ids = pcall(function()
         return collectionfactory.create(TANK_COLLECTION_FACTORY_URL, position, rotation)
     end)
@@ -81,7 +81,7 @@ local function create_configured_tank(self, position, rotation, hull_id, turret_
         return
     end
 
-    local hull_factory_url = tank_component_url(container_id, "hull_collectionfactory")
+    local hull_factory_url = tank_component_url(container_id, "hull_collection_factory")
     local turret_factory_url = tank_component_url(container_id, "turret_factory")
 
     local function fail(reason, hull_ids)
