@@ -1229,11 +1229,10 @@ elseif message_id == hash("network_remote_player_state") then
 local player_id = message.player_id
 
 if player_id and player_id ~= self.network_player_id then
-if not self.remote_tanks[player_id] then
-create_remote_tank(self, player_id, message)
-else
-update_remote_tank(self, player_id, message)
-end
+    -- create_remote_tank handles both:
+    -- updating an existing tank and recreating it
+    -- when its hull or turret loadout changes.
+    create_remote_tank(self, player_id, message)
 end
 
 elseif message_id == hash("network_remote_player_remove") then
