@@ -602,6 +602,9 @@ elseif message.type == "player_inactive" then
 remove_remote_player(self, message.player_id)
 
 elseif message.type == "state" then
+    log("Received state from " .. tostring(message.player_id)
+    .. ": hull=" .. tostring(message.hull_id)
+    .. ", turret=" .. tostring(message.turret_id))
 remember_player(self, {
 id = message.player_id,
 x = message.x,
@@ -1178,6 +1181,10 @@ elseif message_id == hash("network_set_loadout") then
 if message.hull_id == "light_hull" then self.hull_id = message.hull_id end
 if message.turret_id == "tank_turret" or message.turret_id == "twin_barrel_turret" then
     self.turret_id = message.turret_id
+    log("LOADOUT UPDATE: "
+    .. tostring(self.hull_id)
+    .. "/"
+    .. tostring(self.turret_id))
 end
 if self.local_state then
     self.local_state.hull_id = self.hull_id

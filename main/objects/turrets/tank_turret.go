@@ -1,14 +1,19 @@
 components {
-  id: "turret_controller"
-  component: "/main/scripts/turret_controller.script"
+  id: "tank_turret_controller"
+  component: "/main/scripts/tank_turret_controller.script"
+  properties {
+    id: "turret_turn_speed"
+    value: "65.0"
+    type: PROPERTY_TYPE_NUMBER
+  }
   properties {
     id: "fire_cooldown"
-    value: "6.0"
+    value: "4.5"
     type: PROPERTY_TYPE_NUMBER
   }
   properties {
     id: "muzzle_distance"
-    value: "85.0"
+    value: "50.0"
     type: PROPERTY_TYPE_NUMBER
   }
 }

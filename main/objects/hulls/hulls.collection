@@ -1,0 +1,6 @@
+name: "hulls"
+collection_instances {
+  id: "light_hull"
+  collection: "/main/objects/hulls/light_hull.collection"
+}
+scale_along_z: 0

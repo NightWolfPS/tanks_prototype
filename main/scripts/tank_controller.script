@@ -16,6 +16,8 @@ local GROUP_TANK = hash("tank")
 local REMOTE_INTERPOLATION_SPEED = 14
 local REMOTE_TELEPORT_DISTANCE = 250
 
+-- local TURRET_CONTROLLER_ID = hash("turret_controller")
+
 local function clamp(value, min_value, max_value)
     return math.max(min_value, math.min(max_value, value))
 end
@@ -24,128 +26,141 @@ local function angle_difference(from_angle, to_angle)
     return (to_angle - from_angle + math.pi) % (2 * math.pi) - math.pi
 end
 
+-- Send status effects to the currently equipped turret.
 local function send_turret_status(self, effects)
-    local ok, turret_id = pcall(go.get_id, "tank_turret")
-    if not ok or not turret_id then
+    if not self.turret_id then
+        print("[PLAYER] Cannot send turret status: turret ID is not assigned")
         return
     end
 
-    local turret_url = msg.url("main", turret_id, hash("turret_controller"))
+    local turret_url = msg.url(
+    "main",
+    self.turret_id,
+    self.turret_controller_id
+)
 
-    pcall(msg.post, turret_url, "status_effects", {
-        effects = effects or {}
-    })
+pcall(msg.post, turret_url, "status_effects", {
+    effects = effects or {}
+})
 end
 
 local function update_health_hud(self)
-    if not self.is_local_player then
-        return
-    end
-
-    msg.post(HUD_URL, "health_update", {
-        health = self.hp,
-        max_health = self.max_hp
-    })
+if not self.is_local_player then
+    return
 end
 
+msg.post(HUD_URL, "health_update", {
+    health = self.hp,
+    max_health = self.max_hp
+})
+end
+
+-- Send the local tank state, reading rotation from the actual turret ID.
 local function send_network_state(self)
-    if not self.is_local_player or self.dead then
-        return
-    end
+if not self.is_local_player or self.dead then
+    return
+end
 
-    local position = go.get_position()
-    local turret_angle = 0
+local position = go.get_position()
+local turret_angle = 0
 
-    local ok, turret_rotation = pcall(go.get_rotation, "tank_turret")
+if self.turret_id then
+    local ok, turret_rotation = pcall(
+    go.get_world_rotation,
+    self.turret_id
+)
 
-    if ok and turret_rotation then
-        local _, _, angle_degrees = vmath.quat_to_euler(turret_rotation)
-        turret_angle = math.rad(angle_degrees)
-    end
+if ok and turret_rotation then
+    local _, _, angle_degrees =
+    vmath.quat_to_euler(turret_rotation)
 
-    msg.post(NETWORK_URL, "network_set_state", {
-        x = position.x,
-        y = position.y,
-        body_angle = self.hull_angle,
-        turret_angle = turret_angle,
-    })
+    turret_angle = math.rad(angle_degrees)
+end
+end
+
+msg.post(NETWORK_URL, "network_set_state", {
+x = position.x,
+y = position.y,
+body_angle = self.hull_angle,
+turret_angle = turret_angle,
+})
 end
 
 local function update_engine_sound(self)
-    local is_moving =
-    self.move_forward or
-    self.move_backward or
-    self.turn_left or
-    self.turn_right
+local is_moving =
+self.move_forward or
+self.move_backward or
+self.turn_left or
+self.turn_right
 
-    if is_moving then
-        if not self.engine_sound_playing then
-            sound.stop("#engine_idle")
-            sound.play("#engine")
-            self.engine_sound_playing = true
-        end
-    else
-        if self.engine_sound_playing then
-            sound.stop("#engine")
-            sound.play("#engine_idle")
-            self.engine_sound_playing = false
-        end
-    end
+if is_moving then
+if not self.engine_sound_playing then
+    sound.stop("#engine_idle")
+    sound.play("#engine")
+    self.engine_sound_playing = true
+end
+else
+if self.engine_sound_playing then
+    sound.stop("#engine")
+    sound.play("#engine_idle")
+    self.engine_sound_playing = false
+end
+end
 end
 
 local function clear_movement_input(self)
-    self.move_forward = false
-    self.move_backward = false
-    self.turn_left = false
-    self.turn_right = false
+self.move_forward = false
+self.move_backward = false
+self.turn_left = false
+self.turn_right = false
 
-    update_engine_sound(self)
+update_engine_sound(self)
 end
 
 local function kill_player(self, killer_id)
-    if self.dead or not self.is_local_player then
-        return
-    end
+if self.dead or not self.is_local_player then
+return
+end
 
-    self.dead = true
-    clear_movement_input(self)
+self.dead = true
+clear_movement_input(self)
 
-    print("[PLAYER] Destroyed")
-    update_health_hud(self)
+print("[PLAYER] Destroyed")
+update_health_hud(self)
 
-    -- The server identifies the victim from this WebSocket connection.
-    msg.post(NETWORK_URL, "network_player_killed", {
-        killer_id = type(killer_id) == "string" and killer_id or ""
-    })
+-- The server identifies the victim from this WebSocket connection.
+msg.post(NETWORK_URL, "network_player_killed", {
+killer_id = type(killer_id) == "string" and killer_id or ""
+})
 
-    msg.post(BOT_SPAWNER_URL, "player_died", {
-        player_id = go.get_id(),
-        killer_id = killer_id
-    })
+msg.post(BOT_SPAWNER_URL, "player_died", {
+player_id = go.get_id(),
+killer_id = killer_id
+})
 
-    msg.post(TANK_SPAWNER_URL, "player_destroyed")
+msg.post(TANK_SPAWNER_URL, "player_destroyed")
 end
 
 local function update_remote_transform(self, dt)
-    if not self.remote_target_position then
-        return
-    end
+if not self.remote_target_position then
+return
+end
 
-    local current_position = go.get_position()
-    local delta = self.remote_target_position - current_position
-    local alpha = clamp(dt * REMOTE_INTERPOLATION_SPEED, 0, 1)
+local current_position = go.get_position()
+local delta = self.remote_target_position - current_position
+local alpha = clamp(dt * REMOTE_INTERPOLATION_SPEED, 0, 1)
 
-    if vmath.length(delta) >= REMOTE_TELEPORT_DISTANCE then
-        go.set_position(self.remote_target_position)
-        self.hull_angle = self.remote_target_angle
-    else
-        go.set_position(current_position + delta * alpha)
+if vmath.length(delta) >= REMOTE_TELEPORT_DISTANCE then
+go.set_position(self.remote_target_position)
+self.hull_angle = self.remote_target_angle
+else
+go.set_position(current_position + delta * alpha)
 
-        self.hull_angle = self.hull_angle
-        + angle_difference(
-        self.hull_angle,
-        self.remote_target_angle
-    ) * alpha
+self.hull_angle = self.hull_angle
++ angle_difference(
+self.hull_angle,
+self.remote_target_angle
+) * alpha
 end
 
 go.set_rotation(vmath.quat_rotation_z(self.hull_angle))
@@ -163,6 +178,10 @@ self.move_backward = false
 self.turn_left = false
 self.turn_right = false
 
+-- Actual turret Game Object ID is assigned by tank_spawner.
+self.turret_id = nil
+self.turret_controller_id = nil
+
 -- Battle menu blocks only local player input.
 self.battle_menu_open = false
 self.chat_open = false
@@ -178,17 +197,17 @@ self.remote_target_angle = self.hull_angle
 sound.play("#engine_idle")
 
 if self.is_local_player then
-    msg.post(".", "acquire_input_focus")
+msg.post(".", "acquire_input_focus")
 
-    msg.post(BOT_SPAWNER_URL, "register_player", {
-        player_id = go.get_id()
-    })
+msg.post(BOT_SPAWNER_URL, "register_player", {
+player_id = go.get_id()
+})
 
-    update_health_hud(self)
+update_health_hud(self)
 
-    print(
-    "[PLAYER] Local player initialized. HP: "
-    .. self.hp .. "/" .. self.max_hp
+print(
+"[PLAYER] Local player initialized. HP: "
+.. self.hp .. "/" .. self.max_hp
 )
 else
 print(
@@ -206,14 +225,14 @@ end
 -- While the battle menu is open, block tank movement keys,
 -- but allow Esc and mouse input to reach the HUD.
 if self.battle_menu_open or self.chat_open then
-    if action_id == hash("up")
-    or action_id == hash("down")
-    or action_id == hash("left")
-    or action_id == hash("right") then
-        return true
-    end
+if action_id == hash("up")
+or action_id == hash("down")
+or action_id == hash("left")
+or action_id == hash("right") then
+return true
+end
 
-    return false
+return false
 end
 
 if self.dead then
@@ -333,24 +352,47 @@ send_network_state(self)
 end
 
 function on_message(self, message_id, message, sender)
+-- Receive the real ID of the selected turret from tank_spawner.
+if message_id == hash("set_turret_reference") then
+    self.turret_id = message.turret_id
+    self.turret_controller_id = message.controller_id
+
+    print(
+    "[PLAYER] Turret reference assigned: "
+    .. tostring(self.turret_id)
+    .. ", controller="
+    .. tostring(self.turret_controller_id)
+)
+
+return
+end
+
 if message_id == hash("battle_menu_state") then
 if self.is_local_player then
 self.battle_menu_open = message.open == true
-if self.battle_menu_open then clear_movement_input(self) end
+
+if self.battle_menu_open then
+clear_movement_input(self)
 end
+end
+
 return
 end
 
 if message_id == hash("chat_state") then
 if self.is_local_player then
 self.chat_open = message.open == true
-if self.chat_open then clear_movement_input(self) end
+
+if self.chat_open then
+clear_movement_input(self)
 end
+end
+
 return
 end
 
 if message_id == hash("set_player_name") then
-local ok, name_id = pcall(go.get_id, "tank_name")
+local ok, name_id = pcall(go.get_id, "tank/tank_name")
 
 if ok and name_id then
 msg.post(msg.url("main", name_id, nil), "set_player_name", {
@@ -362,7 +404,9 @@ end
 return
 end
 
-if message_id == hash("network_remote_state") and not self.is_local_player then
+if message_id == hash("network_remote_state")
+and not self.is_local_player then
+
 local current_position = go.get_position()
 
 self.remote_target_position = vmath.vector3(
@@ -374,17 +418,22 @@ current_position.z
 self.remote_target_angle =
 tonumber(message.body_angle) or self.hull_angle
 
-local ok, turret_id = pcall(go.get_id, "tank_turret")
-
-if ok and turret_id then
-local turret_url = msg.url(
-"main",
-turret_id,
-hash("turret_controller")
+-- Use the actual selected turret, not a fixed object path.
+if self.turret_id then
+    local turret_url = msg.url(
+    "main",
+    self.turret_id,
+    self.turret_controller_id
 )
 
+local world_turret_angle =
+tonumber(message.turret_angle) or 0
+
+local target_hull_angle =
+tonumber(message.body_angle) or self.remote_target_angle
+
 msg.post(turret_url, "network_remote_turret_state", {
-angle = tonumber(message.turret_angle) or 0
+angle = world_turret_angle - target_hull_angle
 })
 end
 
@@ -414,6 +463,7 @@ type(message.effects) == "table" and message.effects or {}
 
 if tonumber(effects.slow_duration)
 and effects.slow_duration > 0 then
+
 self.slow_timer = math.max(
 self.slow_timer,
 effects.slow_duration
@@ -427,6 +477,7 @@ end
 
 if tonumber(effects.stun_duration)
 and effects.stun_duration > 0 then
+
 self.stun_timer = math.max(
 self.stun_timer,
 effects.stun_duration

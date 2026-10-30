@@ -1,0 +1,10 @@
+name: "turrets"
+instances {
+  id: "tank_turret"
+  prototype: "/main/objects/turrets/tank_turret.go"
+}
+instances {
+  id: "twin_barrel_turret"
+  prototype: "/main/objects/turrets/twin_barrel_turret.go"
+}
+scale_along_z: 0

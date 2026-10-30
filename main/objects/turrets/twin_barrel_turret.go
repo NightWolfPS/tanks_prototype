@@ -1,8 +1,4 @@
 components {
-  id: "turret_controller"
-  component: "/tank_multiplayer_step1/tank_multiplayer_step1/defold/turret_controller.script"
-}
-components {
   id: "shoot"
   component: "/main/sounds/shoot.sound"
 }
@@ -10,8 +6,27 @@ components {
   id: "turret1"
   component: "/main/sounds/turret.sound"
 }
+components {
+  id: "twin_barrel_turret_controller"
+  component: "/main/scripts/twin_barrel_turret_controller.script"
+  properties {
+    id: "turret_turn_speed"
+    value: "80.0"
+    type: PROPERTY_TYPE_NUMBER
+  }
+  properties {
+    id: "fire_cooldown"
+    value: "0.75"
+    type: PROPERTY_TYPE_NUMBER
+  }
+  properties {
+    id: "muzzle_distance"
+    value: "75.0"
+    type: PROPERTY_TYPE_NUMBER
+  }
+}
 embedded_components {
-  id: "sprite"
+  id: "turret"
   type: "sprite"
   data: "default_animation: \"anim\"\n"
   "material: \"/builtins/materials/sprite.material\"\n"
