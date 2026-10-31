@@ -2,7 +2,7 @@
 -- Projectile movement, collision and network hit reporting.
 -- Defold 1.13.1
 
-go.property("speed", 500)
+go.property("speed", 750)
 go.property("lifetime", 1.5)
 go.property("damage", 30)
 go.property("min_damage", 1)

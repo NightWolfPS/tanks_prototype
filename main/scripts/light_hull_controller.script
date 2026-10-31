@@ -449,9 +449,21 @@ or message_id == hash("network_apply_damage") then
 
 local damage = tonumber(message.damage) or 0
 
-if damage > 0 then
-self.hp = math.max(0, self.hp - damage)
+if message_id == hash("network_apply_damage")
+and type(message.hp) == "number" then
+    -- PvP HP is authoritative on the server. Do not subtract the same
+    -- damage locally: use the exact remaining HP sent by the server.
+    if type(message.max_hp) == "number" and message.max_hp > 0 then
+        self.max_hp = message.max_hp
+    end
+    self.hp = math.max(0, math.min(self.max_hp, message.hp))
+    update_health_hud(self)
+elseif damage > 0 then
+    -- Local damage path (bots / offline targets).
+    self.hp = math.max(0, self.hp - damage)
+end
 
+if damage > 0 then
 print("[PLAYER] Took " .. damage .. " damage")
 print("[PLAYER] HP: " .. self.hp .. "/" .. self.max_hp)
 

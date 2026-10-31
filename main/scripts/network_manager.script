@@ -139,10 +139,30 @@ if self.in_battle or self.enter_battle_pending then
 return true
 end
 
+-- Refresh the garage save immediately before battle entry. The manager is
+-- created at application startup, while the player may change loadout later.
+local loadout_ok, loadout = pcall(function()
+    return sys.load("garage.save")
+end)
+
+if loadout_ok and type(loadout) == "table" then
+    if type(loadout.hull_id) == "string"
+    and loadout.hull_id:match("^[%w_%-]+$") then
+        self.hull_id = loadout.hull_id
+    end
+
+    if type(loadout.turret_id) == "string"
+    and loadout.turret_id:match("^[%w_%-]+$") then
+        self.turret_id = loadout.turret_id
+    end
+end
+
 self.enter_battle_pending = true
 
 if not send_json(self, {
-type = "enter_battle"
+type = "enter_battle",
+hull_id = self.hull_id or "light_hull",
+turret_id = self.turret_id or "tank_turret"
 }) then
 self.enter_battle_pending = false
 return false
@@ -509,7 +529,8 @@ x = is_number(shot.x) and shot.x or 0,
 y = is_number(shot.y) and shot.y or 0,
 z = is_number(shot.z) and shot.z or 0.5,
 angle = is_number(shot.angle) and shot.angle or 0,
-shot_id = type(shot.shot_id) == "string" and shot.shot_id or ""
+shot_id = type(shot.shot_id) == "string" and shot.shot_id or "",
+projectile = type(shot.projectile) == "table" and shot.projectile or {}
 })
 end
 
@@ -605,9 +626,7 @@ elseif message.type == "player_inactive" then
 remove_remote_player(self, message.player_id)
 
 elseif message.type == "state" then
-    log("Received state from " .. tostring(message.player_id)
-    .. ": hull=" .. tostring(message.hull_id)
-    .. ", turret=" .. tostring(message.turret_id))
+    
 remember_player(self, {
 id = message.player_id,
 x = message.x,
@@ -667,6 +686,8 @@ or {}
 if target_id == self.player_id then
 post_to_spawner(self, "network_apply_damage", {
 damage = damage,
+hp = tonumber(message.hp),
+max_hp = tonumber(message.max_hp),
 killer_id = shooter_id,
 hit_x = message.x,
 hit_y = message.y,
@@ -777,6 +798,8 @@ local damage = math.max(0, tonumber(message.damage) or 0)
 if target_id == self.player_id then
 post_to_spawner(self, "network_apply_damage", {
 damage = damage,
+hp = tonumber(message.hp),
+max_hp = tonumber(message.max_hp),
 killer_id = owner_id,
 effect = message.effect or "burn",
 status_tick = true
@@ -818,6 +841,12 @@ log(
 .. " -> "
 .. tostring(message.victim_id)
 )
+
+-- Remove remote victims immediately; their movement states stop after death.
+if type(message.victim_id) == "string"
+and message.victim_id ~= self.player_id then
+    remove_remote_player(self, message.victim_id)
+end
 
 elseif message.type == "respawn_accepted" then
 log("Server accepted respawn")
@@ -1275,7 +1304,13 @@ elseif message_id == hash("network_send_shot") then
         y = message.y or 0,
         z = message.z or 0.5,
         angle = message.angle or 0,
-        shot_id = message.shot_id or ""
+        shot_id = message.shot_id or "",
+        projectile = {
+            damage = tonumber(message.damage) or 30,
+            min_damage = tonumber(message.min_damage) or 1,
+            speed = tonumber(message.speed) or 500,
+            lifetime = tonumber(message.lifetime) or 1.5
+        }
     })
 
 elseif message_id == hash("network_player_killed") then
@@ -1306,7 +1341,6 @@ end
 send_json(self, {
     type = "projectile_hit",
     target_player_id = target_player_id,
-    damage = message.damage or 0,
     x = message.x or 0,
     y = message.y or 0,
     shot_id = message.shot_id or ""

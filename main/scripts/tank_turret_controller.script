@@ -183,7 +183,11 @@ x = spawn_position.x,
 y = spawn_position.y,
 z = spawn_position.z,
 angle = angle,
-shot_id = shot_id
+shot_id = shot_id,
+damage = 30,
+min_damage = 1,
+speed = 500,
+lifetime = 1.5
 })
 end
 
