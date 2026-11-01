@@ -8,7 +8,7 @@ go.property("muzzle_distance", 50)
 go.property("is_local_player", true)
 
 local NETWORK_URL = msg.url("bootstrap:/network_manager#network_manager")
-local RELOAD_HUD_URL = msg.url("main:/tank_hud#gui")
+-- The HUD belongs to the active battle collection; resolve it in init().
 
 local REMOTE_INTERPOLATION_SPEED = 16
 local LASER_RANGE = 800
@@ -106,7 +106,7 @@ end
 
 progress = clamp(progress, 0, 1)
 
-msg.post(RELOAD_HUD_URL, "reload_progress", {
+msg.post(self.RELOAD_HUD_URL, "reload_progress", {
 progress = progress
 })
 end
@@ -239,6 +239,12 @@ sound.stop("#turret1")
 end
 
 function init(self)
+    self.collection_socket = msg.url().socket
+    self.RELOAD_HUD_URL = msg.url(
+        self.collection_socket,
+        "/tank_hud",
+        "gui"
+    )
 self.turret_left = false
 self.turret_right = false
 self.fire_pressed = false
@@ -278,7 +284,7 @@ if ok_laser and laser_id then
 self.laser_id = laser_id
 
 local laser_sprite_url = msg.url(
-"main",
+self.collection_socket,
 laser_id,
 hash("sprite")
 )

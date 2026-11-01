@@ -1,0 +1,126 @@
+tile_set: "/main/assets/sprites1/barricade.tilesource"
+layers {
+  id: "layer1"
+  z: 0.0
+  cell {
+    x: 2
+    y: 14
+    tile: 0
+  }
+  cell {
+    x: 99
+    y: 14
+    tile: 0
+  }
+  cell {
+    x: 1
+    y: 15
+    tile: 0
+  }
+  cell {
+    x: 4
+    y: 15
+    tile: 0
+  }
+  cell {
+    x: 98
+    y: 15
+    tile: 0
+  }
+  cell {
+    x: 101
+    y: 15
+    tile: 0
+  }
+  cell {
+    x: 2
+    y: 16
+    tile: 0
+  }
+  cell {
+    x: 99
+    y: 16
+    tile: 0
+  }
+  cell {
+    x: 1
+    y: 17
+    tile: 0
+  }
+  cell {
+    x: 98
+    y: 17
+    tile: 0
+  }
+  cell {
+    x: 3
+    y: 18
+    tile: 0
+  }
+  cell {
+    x: 100
+    y: 18
+    tile: 0
+  }
+  cell {
+    x: 2
+    y: 87
+    tile: 0
+  }
+  cell {
+    x: 100
+    y: 87
+    tile: 0
+  }
+  cell {
+    x: 1
+    y: 88
+    tile: 0
+  }
+  cell {
+    x: 4
+    y: 88
+    tile: 0
+  }
+  cell {
+    x: 99
+    y: 88
+    tile: 0
+  }
+  cell {
+    x: 102
+    y: 88
+    tile: 0
+  }
+  cell {
+    x: 2
+    y: 89
+    tile: 0
+  }
+  cell {
+    x: 100
+    y: 89
+    tile: 0
+  }
+  cell {
+    x: 1
+    y: 90
+    tile: 0
+  }
+  cell {
+    x: 99
+    y: 90
+    tile: 0
+  }
+  cell {
+    x: 3
+    y: 91
+    tile: 0
+  }
+  cell {
+    x: 101
+    y: 91
+    tile: 0
+  }
+}
+material: "/builtins/materials/tile_map.material"

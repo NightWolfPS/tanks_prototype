@@ -5,7 +5,7 @@
 
 go.property("spawn_delay", 0.5)
 
-local TANK_COLLECTION_FACTORY_URL = msg.url("main:/tank_spawner#tank_collection_factory")
+local TANK_COLLECTION_FACTORY_URL = nil
 local GARAGE_SAVE_PATH = "garage.save"
 local DEFAULT_HULL_ID = "light_hull"
 local DEFAULT_TURRET_ID = "tank_turret"
@@ -58,11 +58,15 @@ local function load_garage_loadout()
     normalize_turret_id(data.turret_id)
 end
 
-local function tank_component_url(root_id, component_id)
-    return msg.url("main", root_id, hash(component_id))
+local function tank_component_url(self, root_id, component_id)
+    return msg.url(
+        self.collection_socket,
+        root_id,
+        hash(component_id)
+    )
 end
 
-local CAMERA_URL = msg.url("main:/camera")
+-- Camera is part of the active battle collection; resolved in init().
 local NETWORK_MANAGER_URL = msg.url("bootstrap:/network_manager#network_manager")
 
 -- IDs used by tank.collection and light_hull.collection.
@@ -111,16 +115,8 @@ local ok_shell, shell_ids = pcall(function()
 )
 end)
 
-print("[SPAWNER] Shell collection IDs:")
-
-for key, value in pairs(shell_ids) do
-    print(
-    "[SPAWNER] ID: " .. tostring(key)
-    .. " | Object: " .. tostring(value)
-)
-end
-
-if not ok_shell or not shell_ids then
+-- Check the result BEFORE using pairs().
+if not ok_shell then
 on_complete(
 false,
 "tank.collection creation failed: " .. tostring(shell_ids)
@@ -128,33 +124,56 @@ false,
 return
 end
 
-local container_id = shell_ids[TANK_CONTAINER_ID]
-
-if not container_id then
-    pcall(go.delete, shell_ids, true)
-
-    on_complete(
-    false,
-    "tank.collection did not return /tank"
+if type(shell_ids) ~= "table" then
+on_complete(
+false,
+"tank.collection returned invalid IDs: " .. tostring(shell_ids)
 )
 return
 end
 
-local name_id = shell_ids[TANK_NAME_ID]
-go.set_parent(name_id, nil, true)
+print("[SPAWNER] Shell collection IDs:")
 
-if not name_id then
-    pcall(go.delete, shell_ids, true)
-    on_complete(false, "tank.collection did not return /tank_name")
-    return
+for key, value in pairs(shell_ids) do
+print(
+"[SPAWNER] ID: " .. tostring(key)
+.. " | Object: " .. tostring(value)
+)
 end
 
+local container_id = shell_ids[TANK_CONTAINER_ID]
+local name_id = shell_ids[TANK_NAME_ID]
+
+if not container_id then
+pcall(go.delete, shell_ids, true)
+
+on_complete(
+false,
+"tank.collection did not return /tank"
+)
+return
+end
+
+if not name_id then
+pcall(go.delete, shell_ids, true)
+
+on_complete(
+false,
+"tank.collection did not return /tank_name"
+)
+return
+end
+
+go.set_parent(name_id, nil, true)
+
 local hull_factory_url = tank_component_url(
+self,
 container_id,
 "hull_collection_factory"
 )
 
 local turret_factory_url = tank_component_url(
+self,
 container_id,
 "turret_factory"
 )
@@ -561,7 +580,7 @@ local function spawn_tank(self)
         self.selected_turret_id = turret_id
 
         msg.post(
-        msg.url("main", result.name_id, hash("tank_name1")),
+        msg.url(self.collection_socket, result.name_id, hash("tank_name1")),
         "set_player_name",
         {
             name = self.network_player_id or "PLAYER",
@@ -571,9 +590,9 @@ local function spawn_tank(self)
     )
         set_battle_menu_state(self, self.battle_menu_open)
 
-        local target_url = msg.url("main", self.tank_root, nil)
+        local target_url = msg.url(self.collection_socket, self.tank_root, nil)
         local ok_message, message_error = pcall(function()
-            msg.post(CAMERA_URL, "set_target", { target = target_url })
+            msg.post(self.CAMERA_URL, "set_target", { target = target_url })
         end)
         if not ok_message then
             print("[SPAWNER] WARNING: Camera target message failed: " .. tostring(message_error))
@@ -601,7 +620,7 @@ local function destroy_tank(self)
     sound.play("#death")
 
     pcall(function()
-        msg.post(CAMERA_URL, "clear_target")
+        msg.post(self.CAMERA_URL, "clear_target")
     end)
 
     msg.post(NETWORK_MANAGER_URL, "network_player_inactive")
@@ -817,7 +836,7 @@ function(success, result)
     self.remote_tanks[player_id] = remote
 
     msg.post(
-    msg.url("main", result.name_id, hash("tank_name1")),
+    msg.url(self.collection_socket, result.name_id, hash("tank_name1")),
     "set_player_name",
     {
         name = player_id,
@@ -913,7 +932,7 @@ local muzzle_distance = 50
 local ok_distance, distance = pcall(
 go.get,
 "muzzle_distance",
-msg.url("main", turret_id, nil)
+msg.url(self.collection_socket, turret_id, nil)
 )
 
 if ok_distance and type(distance) == "number" then
@@ -946,13 +965,13 @@ angle - math.pi * 0.5
 )
 
 local muzzle_url = msg.url(
-"main",
+self.collection_socket,
 remote.turret_id,
 hash("muzzle_flash_factory")
 )
 
 local projectile_url = msg.url(
-"main",
+self.collection_socket,
 remote.turret_id,
 hash("projectile_factory")
 )
@@ -1018,6 +1037,19 @@ end
 -- ============================================================
 
 function init(self)
+    local own_url = msg.url()
+    self.collection_socket = own_url.socket
+    self.CAMERA_URL = msg.url(
+        self.collection_socket,
+        "/camera",
+        nil
+    )
+
+    TANK_COLLECTION_FACTORY_URL = msg.url(
+    self.collection_socket,
+    "/tank_spawner",
+    "tank_collection_factory"
+)
 self.spawn_points = {}
 self.reserved_spawn_points = {}
 self.spawn_registration_complete = false
@@ -1052,7 +1084,9 @@ math.randomseed(os.time())
 
 print("[DEBUG] Spawner script URL: " .. tostring(msg.url()))
 print("[DEBUG] Tank collection factory URL: " .. tostring(TANK_COLLECTION_FACTORY_URL))
-print("[DEBUG] Camera URL: " .. tostring(CAMERA_URL))
+print("[DEBUG] Camera URL: " .. tostring(self.CAMERA_URL))
+print("[SPAWNER] Active collection socket: " .. tostring(self.collection_socket))
+print("[SPAWNER] Tank factory URL: " .. tostring(TANK_COLLECTION_FACTORY_URL))
 
 msg.post(".", "acquire_input_focus")
 

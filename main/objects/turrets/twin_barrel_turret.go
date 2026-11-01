@@ -38,6 +38,7 @@ embedded_components {
   position {
     x: 2.0
     y: 24.0
+    z: 0.5
   }
   scale {
     x: 0.2

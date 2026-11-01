@@ -82,8 +82,8 @@ embedded_instances {
   "}\n"
   ""
   position {
-    x: 2620.0
-    y: 1314.0
+    x: 297.0
+    y: 2502.0
   }
 }
 embedded_instances {
@@ -118,7 +118,7 @@ embedded_instances {
   "}\n"
   ""
   position {
-    x: 1455.0
+    x: 2644.0
     y: 1368.0
   }
 }
@@ -130,7 +130,55 @@ embedded_instances {
   "}\n"
   ""
   position {
-    x: 1487.0
-    y: 166.0
+    x: 2709.0
+    y: 2489.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_7"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 2284.0
+    y: 2042.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_8"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 2240.0
+    y: 733.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_9"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 778.0
+    y: 2009.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_10"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 517.0
+    y: 755.0
   }
 }

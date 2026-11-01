@@ -39,6 +39,9 @@ embedded_components {
   "  texture: \"/main/assets/tank/weight_hull.tilesource\"\n"
   "}\n"
   ""
+  position {
+    z: 0.1
+  }
   scale {
     x: 0.2
     y: 0.2

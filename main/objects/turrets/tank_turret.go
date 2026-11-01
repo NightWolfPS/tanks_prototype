@@ -13,7 +13,7 @@ components {
   }
   properties {
     id: "muzzle_distance"
-    value: "50.0"
+    value: "75.0"
     type: PROPERTY_TYPE_NUMBER
   }
 }
@@ -37,6 +37,7 @@ embedded_components {
   ""
   position {
     y: 24.0
+    z: 0.5
   }
   scale {
     x: 0.2

@@ -1,0 +1,133 @@
+name: "desert_map_dm"
+instances {
+  id: "desert_arena"
+  prototype: "/main/assets/desert_map/desert_arena.go"
+  scale3 {
+    x: 3.0
+    y: 3.0
+  }
+}
+instances {
+  id: "camera"
+  prototype: "/main/objects/camera.go"
+  position {
+    x: 1535.0
+    y: 798.0
+    z: 2.0
+  }
+}
+instances {
+  id: "tank_hud"
+  prototype: "/main/objects/tank_hud.go"
+}
+instances {
+  id: "tank_spawner"
+  prototype: "/main/objects/tank_spawner.go"
+  position {
+    x: 270.06912
+    y: 299.95584
+  }
+  component_properties {
+    id: "tank_spawner"
+    properties {
+      id: "spawn_delay"
+      value: "1.5"
+      type: PROPERTY_TYPE_NUMBER
+    }
+  }
+}
+instances {
+  id: "bot_spawner"
+  prototype: "/main/objects/bot_spawner.go"
+  component_properties {
+    id: "bot_spawner"
+    properties {
+      id: "max_bots"
+      value: "0.0"
+      type: PROPERTY_TYPE_NUMBER
+    }
+    properties {
+      id: "spawn_interval"
+      value: "1.5"
+      type: PROPERTY_TYPE_NUMBER
+    }
+    properties {
+      id: "respawn_delay"
+      value: "1.5"
+      type: PROPERTY_TYPE_NUMBER
+    }
+  }
+}
+scale_along_z: 0
+embedded_instances {
+  id: "spawn_point_1"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 289.0
+    y: 294.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_2"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 2778.0
+    y: 343.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_3"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 2385.0
+    y: 1563.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_4"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 2772.0
+    y: 2797.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_5"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 694.0
+    y: 2390.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_6"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 1512.0
+    y: 717.0
+  }
+}
