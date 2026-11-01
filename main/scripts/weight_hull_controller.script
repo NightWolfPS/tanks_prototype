@@ -391,18 +391,7 @@ end
 return
 end
 
-if message_id == hash("set_player_name") then
-local ok, name_id = pcall(go.get_id, "tank/tank_name")
 
-if ok and name_id then
-msg.post(msg.url("main", name_id, nil), "set_player_name", {
-name = tostring(message.name or "PLAYER"),
-hide_name = message.hide_name == true
-})
-end
-
-return
-end
 
 if message_id == hash("network_remote_state")
 and not self.is_local_player then

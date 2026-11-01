@@ -1,13 +1,18 @@
 -- tank_name.script
--- Shows nicknames for remote tanks; local tank can hide its own nickname.
+-- Independent nickname object following its tank.
+-- Position follows the hull; rotation remains horizontal.
 -- Defold 1.13.1
+
+local NAME_OFFSET = vmath.vector3(0, 80, 1)
 
 function init(self)
     self.player_name = "PLAYER"
     self.hidden = true
-    -- Keep the label blank until the tank controller tells us whether
-    -- this is the local tank or a remote tank.
+    self.anchor_id = nil
+
     label.set_text("#label", "")
+
+    go.set_rotation(vmath.quat())
 end
 
 local function refresh_label(self)
@@ -18,23 +23,47 @@ local function refresh_label(self)
     end
 end
 
-function on_message(self, message_id, message, sender)
-    if message_id == hash("set_player_name") then
-        local name = tostring(message.name or "PLAYER")
-        if #name > 18 then
-            name = string.sub(name, 1, 18)
-        end
-
-        self.player_name = name
-        self.hidden = message.hide_name == true
-        refresh_label(self)
-
-    elseif message_id == hash("hide_player_name") then
-        self.hidden = true
-        refresh_label(self)
-
-    elseif message_id == hash("show_player_name") then
-        self.hidden = false
-        refresh_label(self)
+function update(self, dt)
+    if not self.anchor_id then
+        return
     end
+
+    local ok, tank_position = pcall(
+    go.get_world_position,
+    self.anchor_id
+)
+
+if not ok or not tank_position then
+    return
+end
+
+-- Follow the tank in world coordinates.
+go.set_position(tank_position + NAME_OFFSET)
+
+-- Never inherit the tank's rotation.
+go.set_rotation(vmath.quat())
+end
+
+function on_message(self, message_id, message, sender)
+if message_id == hash("set_player_name") then
+    local name = tostring(message.name or "PLAYER")
+
+    if #name > 18 then
+        name = string.sub(name, 1, 18)
+    end
+
+    self.player_name = name
+    self.hidden = message.hide_name == true
+    self.anchor_id = message.anchor_id
+
+    refresh_label(self)
+
+elseif message_id == hash("hide_player_name") then
+    self.hidden = true
+    refresh_label(self)
+
+elseif message_id == hash("show_player_name") then
+    self.hidden = false
+    refresh_label(self)
+end
 end

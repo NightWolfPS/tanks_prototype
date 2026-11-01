@@ -67,6 +67,7 @@ local NETWORK_MANAGER_URL = msg.url("bootstrap:/network_manager#network_manager"
 
 -- IDs used by tank.collection and light_hull.collection.
 local TANK_CONTAINER_ID = hash("/tank")
+local TANK_NAME_ID = hash("/tank_name")
 
 -- Compatibility aliases used by existing networking scripts.
 local TANK_ROOT_ID = hash("/light_hull")
@@ -110,6 +111,15 @@ local ok_shell, shell_ids = pcall(function()
 )
 end)
 
+print("[SPAWNER] Shell collection IDs:")
+
+for key, value in pairs(shell_ids) do
+    print(
+    "[SPAWNER] ID: " .. tostring(key)
+    .. " | Object: " .. tostring(value)
+)
+end
+
 if not ok_shell or not shell_ids then
 on_complete(
 false,
@@ -121,13 +131,22 @@ end
 local container_id = shell_ids[TANK_CONTAINER_ID]
 
 if not container_id then
-pcall(go.delete, shell_ids, true)
+    pcall(go.delete, shell_ids, true)
 
-on_complete(
-false,
-"tank.collection did not return /tank"
+    on_complete(
+    false,
+    "tank.collection did not return /tank"
 )
 return
+end
+
+local name_id = shell_ids[TANK_NAME_ID]
+go.set_parent(name_id, nil, true)
+
+if not name_id then
+    pcall(go.delete, shell_ids, true)
+    on_complete(false, "tank.collection did not return /tank_name")
+    return
 end
 
 local hull_factory_url = tank_component_url(
@@ -141,6 +160,9 @@ container_id,
 )
 
 local function fail(reason, hull_ids, turret_instance)
+    if name_id then
+        pcall(go.delete, name_id, true)
+    end
 if turret_instance then
 pcall(go.delete, turret_instance, true)
 end
@@ -383,15 +405,16 @@ all_ids[TANK_TURRET_ID] = turret_instance
 all_ids[TANK_CONTAINER_ALIAS] = container_id
 
 on_complete(true, {
-ids = all_ids,
+    ids = all_ids,
 
-root_id = hull_root,
-container_id = container_id,
-pivot_id = pivot_id,
-turret_id = turret_instance,
+    root_id = hull_root,
+    container_id = container_id,
+    name_id = name_id,
+    pivot_id = pivot_id,
+    turret_id = turret_instance,
 
-hull_id = hull_id,
-turret_loadout_id = turret_id
+    hull_id = hull_id,
+    turret_loadout_id = turret_id
 })
 end
 )
@@ -537,10 +560,15 @@ local function spawn_tank(self)
         self.selected_hull_id = hull_id
         self.selected_turret_id = turret_id
 
-        msg.post(self.tank_root, "set_player_name", {
+        msg.post(
+        msg.url("main", result.name_id, hash("tank_name1")),
+        "set_player_name",
+        {
             name = self.network_player_id or "PLAYER",
-            hide_name = true
-        })
+            hide_name = true,
+            anchor_id = result.root_id
+        }
+    )
         set_battle_menu_state(self, self.battle_menu_open)
 
         local target_url = msg.url("main", self.tank_root, nil)
@@ -579,6 +607,9 @@ local function destroy_tank(self)
     msg.post(NETWORK_MANAGER_URL, "network_player_inactive")
 
     local old_root = self.tank_root
+    if self.tank_ids and self.tank_ids[TANK_NAME_ID] then
+        pcall(go.delete, self.tank_ids[TANK_NAME_ID], true)
+    end
 
     local ok_delete, delete_error = pcall(function()
         go.delete(old_root, true)
@@ -632,7 +663,9 @@ local function remove_remote_tank(self, player_id)
     end
 
     self.remote_tanks[player_id] = nil
-
+    if remote.ids and remote.ids[TANK_NAME_ID] then
+        pcall(go.delete, remote.ids[TANK_NAME_ID], true)
+    end
     if remote.root_id then
         pcall(function()
             go.delete(remote.root_id, true)
@@ -777,15 +810,21 @@ function(success, result)
         hull_id = remote_hull_id,
         loadout_turret_id = remote_turret_id,
         ids = result.ids,
+        name_id = result.name_id,
         pending = false
     }
 
     self.remote_tanks[player_id] = remote
 
-    msg.post(remote.root_id, "set_player_name", {
+    msg.post(
+    msg.url("main", result.name_id, hash("tank_name1")),
+    "set_player_name",
+    {
         name = player_id,
-        hide_name = false
-    })
+        hide_name = false,
+        anchor_id = result.root_id
+    }
+)
 
     register_remote_instance(
     player_id,
