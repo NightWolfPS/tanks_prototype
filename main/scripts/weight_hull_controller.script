@@ -192,6 +192,7 @@ self.turret_controller_id = nil
 -- Battle menu blocks only local player input.
 self.battle_menu_open = false
 self.chat_open = false
+self.match_ending = false
 
 self.engine_sound_playing = false
 
@@ -231,6 +232,10 @@ end
 
 -- While the battle menu is open, block tank movement keys,
 -- but allow Esc and mouse input to reach the HUD.
+if self.match_ending then
+return true
+end
+
 if self.battle_menu_open or self.chat_open then
 if action_id == hash("up")
 or action_id == hash("down")
@@ -302,6 +307,11 @@ if self.dead then
 return
 end
 
+if self.network_disconnected or self.match_ending then
+    clear_movement_input(self)
+    return
+end
+
 self.correction = vmath.vector3(0, 0, 0)
 
 self.slow_timer = math.max(0, self.slow_timer - dt)
@@ -359,6 +369,43 @@ send_network_state(self)
 end
 
 function on_message(self, message_id, message, sender)
+if message_id == hash("match_ending") then
+    if self.is_local_player then
+        self.match_ending = true
+        clear_movement_input(self)
+    end
+    return
+end
+
+if message_id == hash("network_connection_state") then
+    if self.is_local_player then
+        self.network_disconnected = message.connected ~= true
+        if self.network_disconnected then clear_movement_input(self) end
+    end
+    return
+end
+
+if message_id == hash("network_restore_state") then
+    if self.is_local_player then
+        if type(message.hp) == "number" then self.hp = message.hp end
+        if type(message.max_hp) == "number" and message.max_hp > 0 then self.max_hp = message.max_hp end
+        if type(message.body_angle) == "number" then
+            self.hull_angle = message.body_angle
+            go.set_rotation(vmath.quat_rotation_z(self.hull_angle))
+        end
+        self.dead = message.life_state == "dead"
+        self.network_disconnected = false
+        clear_movement_input(self)
+        update_health_hud(self)
+        if self.turret_id and type(message.turret_angle) == "number" then
+            local turret_url = msg.url(self.collection_socket, self.turret_id, self.turret_controller_id)
+            pcall(msg.post, turret_url, "network_remote_turret_state", {
+                angle = message.turret_angle - (self.hull_angle or 0)
+            })
+        end
+    end
+    return
+end
 -- Receive the real ID of the selected turret from tank_spawner.
 if message_id == hash("set_turret_reference") then
     self.turret_id = message.turret_id

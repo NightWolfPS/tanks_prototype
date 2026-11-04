@@ -248,9 +248,11 @@ function init(self)
 self.turret_left = false
 self.turret_right = false
 self.fire_pressed = false
+self.network_disconnected = false
 
 self.battle_menu_open = false
 self.chat_open = false
+self.match_ending = false
 
 self.fire_timer = 0
 self.shot_counter = 0
@@ -318,6 +320,16 @@ end
 function on_input(self, action_id, action)
 if not self.is_local_player then
 return false
+end
+
+if self.match_ending then
+    clear_turret_input(self)
+    return true
+end
+
+if self.network_disconnected then
+    clear_turret_input(self)
+    return true
 end
 
 if self.battle_menu_open or self.chat_open then
@@ -388,6 +400,18 @@ end
 return
 end
 
+if self.match_ending then
+    clear_turret_input(self)
+    update_laser(self)
+    return
+end
+
+if self.network_disconnected then
+    clear_turret_input(self)
+    update_laser(self)
+    return
+end
+
 self.stun_timer = math.max(0, self.stun_timer - dt)
 
 if self.battle_menu_open or self.chat_open then
@@ -441,6 +465,26 @@ send_reload_progress(self)
 end
 
 function on_message(self, message_id, message, sender)
+if message_id == hash("match_ending") then
+    if self.is_local_player then
+        self.match_ending = true
+        clear_turret_input(self)
+    end
+    return
+end
+
+if message_id == hash("network_connection_state") then
+    if self.is_local_player then
+        self.network_disconnected = message.connected ~= true
+        if self.network_disconnected then
+            self.turret_left = false
+            self.turret_right = false
+            self.fire_pressed = false
+        end
+    end
+    return
+end
+
 if message_id == hash("set_tank_owner") then
 self.tank_owner_id = message.tank_id
 or message.owner_id

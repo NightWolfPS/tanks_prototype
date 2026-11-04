@@ -1,0 +1,6 @@
+name: "match_score"
+instances {
+  id: "match_score"
+  prototype: "/main/objects/match_score.go"
+}
+scale_along_z: 0

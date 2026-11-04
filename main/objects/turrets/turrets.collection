@@ -7,4 +7,8 @@ instances {
   id: "twin_barrel_turret"
   prototype: "/main/objects/turrets/twin_barrel_turret.go"
 }
+instances {
+  id: "heavy_turret"
+  prototype: "/main/objects/turrets/heavy_turret.go"
+}
 scale_along_z: 0

@@ -1,2 +1,6 @@
 name: "auth"
+instances {
+  id: "auth"
+  prototype: "/main/objects/auth.go"
+}
 scale_along_z: 0

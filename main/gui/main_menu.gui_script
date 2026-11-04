@@ -102,7 +102,17 @@ local function build_menu(self)
     log("Menu created. GUI size: " .. tostring(self.width) .. "x" .. tostring(self.height))
 end
 
+local function set_battle_button_label(self, value)
+    for _, button in ipairs(self.buttons or {}) do
+        if button.id == "battle" and button.label then
+            gui.set_text(button.label, value)
+            break
+        end
+    end
+end
+
 local function set_status(self, message)
+    if self.searching then return end
     local id = message.server_id or self.selected_server_id or "?"
     local users = tonumber(message.connected_users)
     self.selected_server_id = id
@@ -137,8 +147,19 @@ end
 
 local function activate_button(self, id)
     if id == "battle" then
-        log("BATTLE selected")
-        msg.post("bootstrap:/scene_manager#scene_manager", "open_battle")
+        if self.searching then
+            log("Cancelling matchmaking")
+            msg.post("bootstrap:/network_manager#network_manager", "network_cancel_match")
+            self.searching = false
+            set_battle_button_label(self, "BATTLE")
+            gui.set_text(self.server_status_label, "Search cancelled")
+        else
+            log("BATTLE selected; requesting matchmaking")
+            self.searching = true
+            set_battle_button_label(self, "CANCEL SEARCH")
+            gui.set_text(self.server_status_label, "Searching for a match...")
+            msg.post("bootstrap:/network_manager#network_manager", "network_find_match")
+        end
     elseif id == "garage" then
         log("GARAGE selected")
         msg.post("bootstrap:/scene_manager#scene_manager", "open_garage")
@@ -153,6 +174,7 @@ function init(self)
     self.pressed_button = nil
     self.selected_server_id = "EU1"
     self.status_poll_timer = 0
+    self.searching = false
     build_menu(self)
     msg.post(".", "acquire_input_focus")
     msg.post("bootstrap:/network_manager#network_manager", "network_get_server_status")
@@ -172,6 +194,17 @@ end
 function on_message(self, message_id, message, sender)
     if message_id == hash("server_status_update") then
         set_status(self, message)
+    elseif message_id == hash("matchmaking_waiting") then
+        self.searching = true
+        set_battle_button_label(self, "CANCEL SEARCH")
+        gui.set_text(self.server_status_label,
+            "Waiting for player 2... " .. tostring(message.players_count or 1)
+            .. "/" .. tostring(message.max_players or 10))
+    elseif message_id == hash("matchmaking_failed") then
+        self.searching = false
+        set_battle_button_label(self, "BATTLE")
+        gui.set_text(self.server_status_label,
+            "Matchmaking failed: " .. tostring(message.reason or "unknown"))
     end
 end
 

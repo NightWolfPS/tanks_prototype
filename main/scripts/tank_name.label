@@ -3,5 +3,5 @@ size {
   y: 32.0
 }
 text: "Player"
-font: "/builtins/fonts/default.font"
-material: "/builtins/fonts/label-df.material"
+font: "/main/fonts/ru.font"
+material: "/builtins/fonts/label.material"

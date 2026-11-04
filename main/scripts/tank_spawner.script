@@ -60,10 +60,10 @@ end
 
 local function tank_component_url(self, root_id, component_id)
     return msg.url(
-        self.collection_socket,
-        root_id,
-        hash(component_id)
-    )
+    self.collection_socket,
+    root_id,
+    hash(component_id)
+)
 end
 
 -- Camera is part of the active battle collection; resolved in init().
@@ -86,13 +86,13 @@ local GROUP_TANK = hash("tank")
 -- Create the tank shell first, then configure its two dynamic factories.
 -- The returned root is the selected hull (the object with tank_controller).
 local function create_configured_tank(
-    self,
-    position,
-    rotation,
-    hull_id,
-    turret_id,
-    is_local,
-    on_complete
+self,
+position,
+rotation,
+hull_id,
+turret_id,
+is_local,
+on_complete
 )
 hull_id = normalize_hull_id(hull_id)
 turret_id = normalize_turret_id(turret_id)
@@ -108,10 +108,10 @@ print("[SPAWNER] Turret resource: " .. turret_prototype)
 
 -- Create the permanent tank container.
 local ok_shell, shell_ids = pcall(function()
-    return collectionfactory.create(
-    TANK_COLLECTION_FACTORY_URL,
-    position,
-    rotation
+return collectionfactory.create(
+TANK_COLLECTION_FACTORY_URL,
+position,
+rotation
 )
 end)
 
@@ -179,9 +179,9 @@ container_id,
 )
 
 local function fail(reason, hull_ids, turret_instance)
-    if name_id then
-        pcall(go.delete, name_id, true)
-    end
+if name_id then
+pcall(go.delete, name_id, true)
+end
 if turret_instance then
 pcall(go.delete, turret_instance, true)
 end
@@ -424,16 +424,16 @@ all_ids[TANK_TURRET_ID] = turret_instance
 all_ids[TANK_CONTAINER_ALIAS] = container_id
 
 on_complete(true, {
-    ids = all_ids,
+ids = all_ids,
 
-    root_id = hull_root,
-    container_id = container_id,
-    name_id = name_id,
-    pivot_id = pivot_id,
-    turret_id = turret_instance,
+root_id = hull_root,
+container_id = container_id,
+name_id = name_id,
+pivot_id = pivot_id,
+turret_id = turret_instance,
 
-    hull_id = hull_id,
-    turret_loadout_id = turret_id
+hull_id = hull_id,
+turret_loadout_id = turret_id
 })
 end
 )
@@ -446,52 +446,52 @@ end
 -- ============================================================
 
 local function reserve_spawn_point(self, preferred_index)
-    if not self.spawn_registration_complete or #self.spawn_points == 0 then
-        return nil, nil
-    end
+if not self.spawn_registration_complete or #self.spawn_points == 0 then
+return nil, nil
+end
 
-    if preferred_index
-    and preferred_index >= 1
-    and preferred_index <= #self.spawn_points
-    and not self.reserved_spawn_points[preferred_index] then
-        self.reserved_spawn_points[preferred_index] = true
+if preferred_index
+and preferred_index >= 1
+and preferred_index <= #self.spawn_points
+and not self.reserved_spawn_points[preferred_index] then
+self.reserved_spawn_points[preferred_index] = true
 
-        print("[SPAWNER] Reserved server-assigned spawn point: "
-        .. preferred_index)
+print("[SPAWNER] Reserved server-assigned spawn point: "
+.. preferred_index)
 
-        return preferred_index, self.spawn_points[preferred_index]
-    end
+return preferred_index, self.spawn_points[preferred_index]
+end
 
-    local available = {}
+local available = {}
 
-    for index = 1, #self.spawn_points do
-        if not self.reserved_spawn_points[index] then
-            available[#available + 1] = index
-        end
-    end
+for index = 1, #self.spawn_points do
+if not self.reserved_spawn_points[index] then
+available[#available + 1] = index
+end
+end
 
-    if #available == 0 then
-        return nil, nil
-    end
+if #available == 0 then
+return nil, nil
+end
 
-    local selected_index = available[math.random(1, #available)]
-    self.reserved_spawn_points[selected_index] = true
+local selected_index = available[math.random(1, #available)]
+self.reserved_spawn_points[selected_index] = true
 
-    print("[SPAWNER] Reserved spawn point: " .. selected_index)
+print("[SPAWNER] Reserved spawn point: " .. selected_index)
 
-    return selected_index, self.spawn_points[selected_index]
+return selected_index, self.spawn_points[selected_index]
 end
 
 local function release_spawn_point(self, index)
-    if not index then
-        return
-    end
+if not index then
+return
+end
 
-    if self.reserved_spawn_points[index] then
-        self.reserved_spawn_points[index] = nil
+if self.reserved_spawn_points[index] then
+self.reserved_spawn_points[index] = nil
 
-        print("[SPAWNER] Released spawn point: " .. tostring(index))
-    end
+print("[SPAWNER] Released spawn point: " .. tostring(index))
+end
 end
 
 -- ============================================================
@@ -499,163 +499,187 @@ end
 -- ============================================================
 
 local function set_battle_menu_state(self, is_open)
-    self.battle_menu_open = is_open == true
+self.battle_menu_open = is_open == true
 
-    if not self.spawned or not self.tank_ids then
-        return
-    end
+if not self.spawned or not self.tank_ids then
+return
+end
 
-    -- tank_ids contains the objects created for the local tank
-    -- collection only. Remote tanks are stored separately.
-    for _, object_id in pairs(self.tank_ids) do
-        if object_id then
-            pcall(function()
-                msg.post(object_id, "battle_menu_state", {
-                    open = self.battle_menu_open
-                })
-            end)
-        end
-    end
+-- tank_ids contains the objects created for the local tank
+-- collection only. Remote tanks are stored separately.
+for _, object_id in pairs(self.tank_ids) do
+if object_id then
+pcall(function()
+msg.post(object_id, "battle_menu_state", {
+open = self.battle_menu_open
+})
+end)
+end
+end
 end
 
 -- ============================================================
 -- Local player tank
 -- ============================================================
 
+local function restore_local_tank_state(self, state)
+if not self.tank_root or type(state) ~= "table" then return false end
+local current = go.get_position(self.tank_root)
+if type(state.x) == "number" and type(state.y) == "number" then
+    go.set_position(vmath.vector3(state.x, state.y, current.z), self.tank_root)
+end
+msg.post(self.tank_root, "network_restore_state", state)
+for _, object_id in pairs(self.tank_ids or {}) do
+    if object_id then msg.post(object_id, "network_connection_state", { connected = true }) end
+end
+return true
+end
+
 local function spawn_tank(self)
-    if not self.spawn_registration_complete or not self.network_ready then
-        return false
-    end
-    if self.has_spawned_once and not self.respawn_authorized then
-        print("[SPAWNER] Respawn not authorized by server")
-        return false
-    end
-    if #self.spawn_points == 0 then
-        print("[SPAWNER] ERROR: No spawn points registered")
-        return false
-    end
+if not self.spawn_registration_complete or not self.network_ready then
+return false
+end
+if self.has_spawned_once and not self.respawn_authorized then
+print("[SPAWNER] Respawn not authorized by server")
+return false
+end
+if #self.spawn_points == 0 then
+print("[SPAWNER] ERROR: No spawn points registered")
+return false
+end
 
-    local preferred_index = self.assigned_spawn_index ~= nil and (self.assigned_spawn_index + 1) or nil
-    local point_index, point = reserve_spawn_point(self, preferred_index)
-    if not point_index or not point then
-        print("[SPAWNER] No free spawn points. Retrying later")
-        return false
-    end
-    if preferred_index and point_index ~= preferred_index then
-        print("[SPAWNER] WARNING: Assigned marker unavailable; using marker " .. point_index)
-    end
-    if not point.position or not point.rotation then
-        print("[SPAWNER] ERROR: Invalid spawn point transform")
-        release_spawn_point(self, point_index)
-        return false
-    end
+local preferred_index = self.assigned_spawn_index ~= nil and (self.assigned_spawn_index + 1) or nil
+local point_index, point = reserve_spawn_point(self, preferred_index)
+if not point_index or not point then
+print("[SPAWNER] No free spawn points. Retrying later")
+return false
+end
+if preferred_index and point_index ~= preferred_index then
+print("[SPAWNER] WARNING: Assigned marker unavailable; using marker " .. point_index)
+end
+if not point.position or not point.rotation then
+print("[SPAWNER] ERROR: Invalid spawn point transform")
+release_spawn_point(self, point_index)
+return false
+end
 
-    local hull_id, turret_id = load_garage_loadout()
-    self.spawn_in_progress = true
-    create_configured_tank(self, point.position, point.rotation, hull_id, turret_id, true,
-    function(success, result)
-        self.spawn_in_progress = false
-        if not success then
-            print("[SPAWNER] ERROR: Configured tank spawn failed: " .. tostring(result))
-            release_spawn_point(self, point_index)
-            self.timer = 1
-            return
-        end
-        if not self.network_ready then
-            pcall(go.delete, result.root_id, true)
-            release_spawn_point(self, point_index)
-            return
-        end
+local hull_id, turret_id = load_garage_loadout()
+if self.server_hull_id then hull_id = self.server_hull_id end
+if self.server_turret_id then turret_id = self.server_turret_id end
+self.spawn_in_progress = true
+create_configured_tank(self, point.position, point.rotation, hull_id, turret_id, true,
+function(success, result)
+self.spawn_in_progress = false
+if not success then
+print("[SPAWNER] ERROR: Configured tank spawn failed: " .. tostring(result))
+release_spawn_point(self, point_index)
+self.timer = 1
+return
+end
+if not self.network_ready then
+pcall(go.delete, result.root_id, true)
+release_spawn_point(self, point_index)
+return
+end
 
-        self.tank_ids = result.ids
-        self.tank_root = result.root_id
-        self.tank_container = result.container_id
-        self.tank_turret = result.turret_id
-        self.current_spawn_index = point_index
-        self.spawned = true
-        self.has_spawned_once = true
-        self.respawn_authorized = false
-        self.respawn_requested = false
-        self.selected_hull_id = hull_id
-        self.selected_turret_id = turret_id
+self.tank_ids = result.ids
+self.tank_root = result.root_id
+self.tank_container = result.container_id
+self.tank_turret = result.turret_id
+self.current_spawn_index = point_index
+self.spawned = true
+self.has_spawned_once = true
+self.respawn_authorized = false
+self.respawn_requested = false
+self.selected_hull_id = hull_id
+self.selected_turret_id = turret_id
 
-        msg.post(
-        msg.url(self.collection_socket, result.name_id, hash("tank_name1")),
-        "set_player_name",
-        {
-            name = self.network_player_id or "PLAYER",
-            hide_name = true,
-            anchor_id = result.root_id
-        }
-    )
-        set_battle_menu_state(self, self.battle_menu_open)
+if self.pending_restore_state then
+    restore_local_tank_state(self, self.pending_restore_state)
+    self.pending_restore_state = nil
+end
 
-        local target_url = msg.url(self.collection_socket, self.tank_root, nil)
-        local ok_message, message_error = pcall(function()
-            msg.post(self.CAMERA_URL, "set_target", { target = target_url })
-        end)
-        if not ok_message then
-            print("[SPAWNER] WARNING: Camera target message failed: " .. tostring(message_error))
-        end
+msg.post(
+msg.url(self.collection_socket, result.name_id, hash("tank_name1")),
+"set_player_name",
+{
+    name = self.network_player_id or "PLAYER",
+    hide_name = true,
+    anchor_id = result.root_id
+}
+)
+msg.post(
+msg.url(self.collection_socket, result.name_id, hash("tank_name1")),
+hash("hide_player_name")
+)
+set_battle_menu_state(self, self.battle_menu_open)
 
-        msg.post(NETWORK_MANAGER_URL, "network_set_loadout", {
-            hull_id = hull_id,
-            turret_id = turret_id
-        })
+local target_url = msg.url(self.collection_socket, self.tank_root, nil)
+local ok_message, message_error = pcall(function()
+msg.post(self.CAMERA_URL, "set_target", { target = target_url })
+end)
+if not ok_message then
+print("[SPAWNER] WARNING: Camera target message failed: " .. tostring(message_error))
+end
 
-        print("[SPAWNER] Local tank spawned at marker " .. point_index
-        .. " (network player " .. tostring(self.network_player_id) .. ")"
-        .. "; loadout=" .. hull_id .. "/" .. turret_id)
-    end)
+msg.post(NETWORK_MANAGER_URL, "network_set_loadout", {
+hull_id = hull_id,
+turret_id = turret_id
+})
 
-    return true
+print("[SPAWNER] Local tank spawned at marker " .. point_index
+.. " (network player " .. tostring(self.network_player_id) .. ")"
+.. "; loadout=" .. hull_id .. "/" .. turret_id)
+end)
+
+return true
 end
 
 local function destroy_tank(self)
-    if not self.tank_root then
-        print("[SPAWNER] No tank instance to destroy")
-        return false
-    end
+if not self.tank_root then
+print("[SPAWNER] No tank instance to destroy")
+return false
+end
 
-    sound.play("#death")
+sound.play("#death")
 
-    pcall(function()
-        msg.post(self.CAMERA_URL, "clear_target")
-    end)
+pcall(function()
+msg.post(self.CAMERA_URL, "clear_target")
+end)
 
-    msg.post(NETWORK_MANAGER_URL, "network_player_inactive")
+msg.post(NETWORK_MANAGER_URL, "network_player_inactive")
 
-    local old_root = self.tank_root
-    if self.tank_ids and self.tank_ids[TANK_NAME_ID] then
-        pcall(go.delete, self.tank_ids[TANK_NAME_ID], true)
-    end
+local old_root = self.tank_root
+if self.tank_ids and self.tank_ids[TANK_NAME_ID] then
+pcall(go.delete, self.tank_ids[TANK_NAME_ID], true)
+end
 
-    local ok_delete, delete_error = pcall(function()
-        go.delete(old_root, true)
-    end)
+local ok_delete, delete_error = pcall(function()
+go.delete(old_root, true)
+end)
 
-    if not ok_delete then
-        print("[SPAWNER] ERROR: Destroy failed: "
-        .. tostring(delete_error))
-        return false
-    end
+if not ok_delete then
+print("[SPAWNER] ERROR: Destroy failed: "
+.. tostring(delete_error))
+return false
+end
 
-    release_spawn_point(self, self.current_spawn_index)
+release_spawn_point(self, self.current_spawn_index)
 
-    self.tank_ids = nil
-    self.tank_root = nil
-    self.tank_container = nil
-    self.tank_turret = nil
-    self.current_spawn_index = nil
-    self.spawned = false
+self.tank_ids = nil
+self.tank_root = nil
+self.tank_container = nil
+self.tank_turret = nil
+self.current_spawn_index = nil
+self.spawned = false
 
-    self.timer = self.spawn_delay
-    self.respawn_requested = false
-    self.respawn_authorized = false
+self.timer = self.spawn_delay
+self.respawn_requested = false
+self.respawn_authorized = false
 
-    print("[SPAWNER] Tank destroyed; respawn scheduled")
+print("[SPAWNER] Tank destroyed; respawn scheduled")
 
-    return true
+return true
 end
 
 -- ============================================================
@@ -663,136 +687,168 @@ end
 -- ============================================================
 
 local function get_remote_tank(self, player_id)
-    return self.remote_tanks[player_id]
+return self.remote_tanks[player_id]
 end
 
 local function register_remote_instance(player_id, ids, root_id)
-    msg.post(NETWORK_MANAGER_URL, "network_remote_instance_registered", {
-        player_id = player_id,
-        root_id = root_id,
-        ids = ids
-    })
+msg.post(NETWORK_MANAGER_URL, "network_remote_instance_registered", {
+player_id = player_id,
+root_id = root_id,
+ids = ids
+})
 end
 
 local function remove_remote_tank(self, player_id)
-    local remote = self.remote_tanks[player_id]
+local remote = self.remote_tanks[player_id]
 
-    if not remote then
-        return
-    end
+if not remote then
+return
+end
 
-    self.remote_tanks[player_id] = nil
-    if remote.ids and remote.ids[TANK_NAME_ID] then
-        pcall(go.delete, remote.ids[TANK_NAME_ID], true)
-    end
-    if remote.root_id then
-        pcall(function()
-            go.delete(remote.root_id, true)
-        end)
-    end
+self.remote_tanks[player_id] = nil
+if remote.ids and remote.ids[TANK_NAME_ID] then
+pcall(go.delete, remote.ids[TANK_NAME_ID], true)
+end
+if remote.root_id then
+pcall(function()
+go.delete(remote.root_id, true)
+end)
+end
 
-    msg.post(NETWORK_MANAGER_URL, "network_remote_instance_unregistered", {
-        player_id = player_id,
-        root_id = remote.root_id,
-        ids = remote.ids
-    })
+msg.post(NETWORK_MANAGER_URL, "network_remote_instance_unregistered", {
+player_id = player_id,
+root_id = remote.root_id,
+ids = remote.ids
+})
 
-    print("[SPAWNER] Removed remote tank: " .. tostring(player_id))
+print("[SPAWNER] Removed remote tank: " .. tostring(player_id))
 end
 
 local function clear_remote_tanks(self)
-    local player_ids = {}
+local player_ids = {}
 
-    for player_id in pairs(self.remote_tanks) do
-        player_ids[#player_ids + 1] = player_id
-    end
+for player_id in pairs(self.remote_tanks) do
+player_ids[#player_ids + 1] = player_id
+end
 
-    for _, player_id in ipairs(player_ids) do
-        remove_remote_tank(self, player_id)
-    end
+for _, player_id in ipairs(player_ids) do
+remove_remote_tank(self, player_id)
+end
 
-    self.pending_remote_shots = {}
+self.pending_remote_shots = {}
+end
+
+local function set_remote_tank_name(self, remote, nickname)
+    print(
+    "[SPAWNER] Setting remote nickname:"
+    .. " player_id=" .. tostring(remote and remote.player_id)
+    .. " nickname=" .. tostring(nickname)
+)
+if not remote or not remote.name_id then
+return
+end
+
+if type(nickname) ~= "string" or nickname == "" then
+nickname = remote.player_id or "PLAYER"
+end
+
+if remote.nickname == nickname then
+return
+end
+
+remote.nickname = nickname
+
+msg.post(
+msg.url(self.collection_socket, remote.name_id, hash("tank_name1")),
+"set_player_name",
+{
+name = nickname,
+hide_name = false,
+anchor_id = remote.root_id
+}
+)
 end
 
 local function update_remote_tank(self, player_id, state)
-    local remote = get_remote_tank(self, player_id)
+local remote = get_remote_tank(self, player_id)
 
-    if not remote or not remote.root_id or remote.pending then
-        return false
-    end
+if not remote or not remote.root_id or remote.pending then
+return false
+end
 
-    msg.post(remote.root_id, "network_remote_state", {
-        x = state.x,
-        y = state.y,
-        body_angle = state.body_angle or 0,
-        turret_angle = state.turret_angle or 0,
-        state_seq = state.state_seq
-    })
+msg.post(remote.root_id, "network_remote_state", {
+x = state.x,
+y = state.y,
+body_angle = state.body_angle or 0,
+turret_angle = state.turret_angle or 0,
+state_seq = state.state_seq
+})
 
-    return true
+return true
 end
 
 local function create_remote_tank(self, player_id, state)
-    if type(player_id) ~= "string" or player_id == "" then
-        print("[SPAWNER] ERROR: Invalid remote player ID")
-        return false
-    end
+if type(player_id) ~= "string" or player_id == "" then
+print("[SPAWNER] ERROR: Invalid remote player ID")
+return false
+end
 
-    if player_id == self.network_player_id then
-        return false
-    end
+if player_id == self.network_player_id then
+return false
+end
 
-    if type(state) ~= "table"
-    or type(state.x) ~= "number"
-    or type(state.y) ~= "number" then
-        return false
-    end
+if type(state) ~= "table"
+or type(state.x) ~= "number"
+or type(state.y) ~= "number" then
+return false
+end
 
-    print("[SPAWNER] Remote loadout received: "
-    .. player_id
-    .. " hull=" .. tostring(state.hull_id)
-    .. " turret=" .. tostring(state.turret_id))
+print("[SPAWNER] Remote loadout received: "
+.. player_id
+.. " hull=" .. tostring(state.hull_id)
+.. " turret=" .. tostring(state.turret_id))
 
-    local existing = self.remote_tanks[player_id]
+local existing = self.remote_tanks[player_id]
 
-    -- Check whether the remote player's loadout has changed.
-    if existing and not existing.pending then
-        local new_hull_id = normalize_hull_id(state.hull_id)
-        local new_turret_id = normalize_turret_id(state.turret_id)
+-- Check whether the remote player's loadout has changed.
+if existing and not existing.pending then
+local new_hull_id = normalize_hull_id(state.hull_id)
+local new_turret_id = normalize_turret_id(state.turret_id)
 
-        if existing.hull_id ~= new_hull_id
-        or existing.loadout_turret_id ~= new_turret_id then
+if existing.hull_id ~= new_hull_id
+or existing.loadout_turret_id ~= new_turret_id then
 
-            print("[SPAWNER] Remote loadout changed for "
-            .. player_id .. ": "
-            .. tostring(existing.hull_id) .. "/"
-            .. tostring(existing.loadout_turret_id)
-            .. " -> "
-            .. new_hull_id .. "/"
-            .. new_turret_id)
+print("[SPAWNER] Remote loadout changed for "
+.. player_id .. ": "
+.. tostring(existing.hull_id) .. "/"
+.. tostring(existing.loadout_turret_id)
+.. " -> "
+.. new_hull_id .. "/"
+.. new_turret_id)
 
-            remove_remote_tank(self, player_id)
-            existing = nil
-        end
-    end
+remove_remote_tank(self, player_id)
+existing = nil
+end
+end
 
-    if existing then
-        update_remote_tank(self, player_id, state)
-        return true
-    end
+if existing then
+set_remote_tank_name(self, existing, state.nickname)
+update_remote_tank(self, player_id, state)
+return true
+end
 
-    local remote_hull_id = normalize_hull_id(state.hull_id)
-    local remote_turret_id = normalize_turret_id(state.turret_id)
+local remote_hull_id = normalize_hull_id(state.hull_id)
+local remote_turret_id = normalize_turret_id(state.turret_id)
 
-    local position = vmath.vector3(state.x, state.y, 0)
-    local rotation = vmath.quat_rotation_z(
-    tonumber(state.body_angle) or 0
+local position = vmath.vector3(state.x, state.y, 0)
+local rotation = vmath.quat_rotation_z(
+tonumber(state.body_angle) or 0
 )
 
 -- Reserve the player key while resources are loading.
 self.remote_tanks[player_id] = {
-    player_id = player_id,
-    pending = true
+player_id = player_id,
+pending = true
 }
 
 create_configured_tank(
@@ -803,52 +859,44 @@ remote_hull_id,
 remote_turret_id,
 false,
 function(success, result)
-    if not success then
-        if self.remote_tanks[player_id]
-        and self.remote_tanks[player_id].pending then
-            self.remote_tanks[player_id] = nil
-        end
+if not success then
+if self.remote_tanks[player_id]
+and self.remote_tanks[player_id].pending then
+self.remote_tanks[player_id] = nil
+end
 
-        print("[SPAWNER] ERROR: Failed to create remote tank for "
-        .. player_id .. ": " .. tostring(result))
-        return
-    end
+print("[SPAWNER] ERROR: Failed to create remote tank for "
+.. player_id .. ": " .. tostring(result))
+return
+end
 
-    -- The player may have disconnected while resources loaded.
-    if not self.remote_tanks[player_id]
-    or not self.remote_tanks[player_id].pending then
-        pcall(go.delete, result.root_id, true)
-        return
-    end
+-- The player may have disconnected while resources loaded.
+if not self.remote_tanks[player_id]
+or not self.remote_tanks[player_id].pending then
+pcall(go.delete, result.root_id, true)
+return
+end
 
-    local remote = {
-        player_id = player_id,
-        root_id = result.root_id,
-        container_id = result.container_id,
-        turret_id = result.turret_id,
-        hull_id = remote_hull_id,
-        loadout_turret_id = remote_turret_id,
-        ids = result.ids,
-        name_id = result.name_id,
-        pending = false
-    }
+local remote = {
+player_id = player_id,
+root_id = result.root_id,
+container_id = result.container_id,
+turret_id = result.turret_id,
+hull_id = remote_hull_id,
+loadout_turret_id = remote_turret_id,
+ids = result.ids,
+name_id = result.name_id,
+pending = false
+}
 
-    self.remote_tanks[player_id] = remote
+self.remote_tanks[player_id] = remote
 
-    msg.post(
-    msg.url(self.collection_socket, result.name_id, hash("tank_name1")),
-    "set_player_name",
-    {
-        name = player_id,
-        hide_name = false,
-        anchor_id = result.root_id
-    }
-)
+set_remote_tank_name(self, remote, state.nickname)
 
-    register_remote_instance(
-    player_id,
-    remote.ids,
-    remote.root_id
+register_remote_instance(
+player_id,
+remote.ids,
+remote.root_id
 )
 
 update_remote_tank(self, player_id, state)
@@ -861,11 +909,11 @@ print("[SPAWNER] Created remote tank for "
 local pending = self.pending_remote_shots[player_id]
 
 if pending then
-    self.pending_remote_shots[player_id] = nil
+self.pending_remote_shots[player_id] = nil
 
-    for _, shot in ipairs(pending) do
-        self:spawn_remote_shot(player_id, shot)
-    end
+for _, shot in ipairs(pending) do
+self:spawn_remote_shot(player_id, shot)
+end
 end
 end
 )
@@ -992,10 +1040,10 @@ print("[SPAWNER] WARNING: Remote muzzle flash creation failed: "
 end
 
 local projectile_profile = type(shot.projectile) == "table"
-    and shot.projectile or {}
+and shot.projectile or {}
 
 local properties = {
-speed = tonumber(projectile_profile.speed) or 500,
+speed = tonumber(projectile_profile.speed) or 750,
 lifetime = tonumber(projectile_profile.lifetime) or 1.5,
 damage = 0,
 min_damage = 0,
@@ -1037,18 +1085,18 @@ end
 -- ============================================================
 
 function init(self)
-    local own_url = msg.url()
-    self.collection_socket = own_url.socket
-    self.CAMERA_URL = msg.url(
-        self.collection_socket,
-        "/camera",
-        nil
-    )
+local own_url = msg.url()
+self.collection_socket = own_url.socket
+self.CAMERA_URL = msg.url(
+self.collection_socket,
+"/camera",
+nil
+)
 
-    TANK_COLLECTION_FACTORY_URL = msg.url(
-    self.collection_socket,
-    "/tank_spawner",
-    "tank_collection_factory"
+TANK_COLLECTION_FACTORY_URL = msg.url(
+self.collection_socket,
+"/tank_spawner",
+"tank_collection_factory"
 )
 self.spawn_points = {}
 self.reserved_spawn_points = {}
@@ -1094,6 +1142,7 @@ print("[SPAWNER] Waiting for spawn point registration and network assignment")
 end
 
 function update(self, dt)
+if self.match_ending then return end
 if not self.spawn_registration_complete then
 self.registration_timer = self.registration_timer - dt
 
@@ -1152,6 +1201,18 @@ function on_message(self, message_id, message, sender)
 
 if message_id == hash("battle_menu_state") then
 set_battle_menu_state(self, message.open == true)
+return
+end
+
+if message_id == hash("match_ending") then
+self.match_ending = true
+if self.spawned and self.tank_ids then
+    for _, object_id in pairs(self.tank_ids) do
+        if object_id then
+            pcall(function() msg.post(object_id, "match_ending") end)
+        end
+    end
+end
 return
 end
 
@@ -1215,6 +1276,18 @@ elseif message_id == hash("network_player_ready") then
 self.network_ready = true
 self.network_player_id = message.player_id
 self.assigned_spawn_index = tonumber(message.spawn_index)
+self.server_life_state = message.life_state or "alive"
+self.server_hull_id = message.hull_id
+self.server_turret_id = message.turret_id
+if self.server_life_state ~= "alive" then
+    self.has_spawned_once = true
+    self.respawn_authorized = false
+end
+if self.tank_root then
+    for _, object_id in pairs(self.tank_ids or {}) do
+        if object_id then msg.post(object_id, "network_connection_state", { connected = true }) end
+    end
+end
 
 self.timer = self.spawn_delay
 
@@ -1226,10 +1299,32 @@ print("[SPAWNER] Server assignment received. Player: "
 elseif message_id == hash("network_disconnected") then
 self.network_ready = false
 self.respawn_requested = false
+if self.tank_root then
+    for _, object_id in pairs(self.tank_ids or {}) do
+        if object_id then msg.post(object_id, "network_connection_state", { connected = false }) end
+    end
+end
 
 clear_remote_tanks(self)
 
 print("[SPAWNER] Network disconnected; waiting for server")
+
+elseif message_id == hash("network_restore_local_state") then
+self.server_life_state = message.life_state or "alive"
+if type(message.hull_id) == "string" then self.server_hull_id = message.hull_id end
+if type(message.turret_id) == "string" then self.server_turret_id = message.turret_id end
+if self.server_life_state == "alive" then
+    if self.spawned and self.tank_root then
+        restore_local_tank_state(self, message)
+    else
+        self.pending_restore_state = message
+        self.respawn_authorized = true
+        self.has_spawned_once = false
+        self.timer = 0
+    end
+elseif self.spawned then
+    destroy_tank(self)
+end
 
 elseif message_id == hash("network_respawn_accepted") then
 if message.player_id ~= self.network_player_id then
@@ -1297,10 +1392,10 @@ elseif message_id == hash("network_remote_player_state") then
 local player_id = message.player_id
 
 if player_id and player_id ~= self.network_player_id then
-    -- create_remote_tank handles both:
-    -- updating an existing tank and recreating it
-    -- when its hull or turret loadout changes.
-    create_remote_tank(self, player_id, message)
+-- create_remote_tank handles both:
+-- updating an existing tank and recreating it
+-- when its hull or turret loadout changes.
+create_remote_tank(self, player_id, message)
 end
 
 elseif message_id == hash("network_remote_player_remove") then

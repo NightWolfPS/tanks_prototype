@@ -1,0 +1,11 @@
+name: "middle_hull"
+instances {
+  id: "middle_hull"
+  prototype: "/main/objects/hulls/middle_hull.go"
+  children: "pivot"
+}
+instances {
+  id: "pivot"
+  prototype: "/main/objects/pivot.go"
+}
+scale_along_z: 0

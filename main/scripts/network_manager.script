@@ -12,7 +12,7 @@ local SERVERS = {
     { id = "EU2", url = "wss://tank-server.layero.app" },
     { id = "AS1", url = "wss://tank-server-2.onrender.com" }
 }
-local DEFAULT_SERVER_INDEX = 3 -- EU1
+local DEFAULT_SERVER_INDEX = 4 -- EU1
 local STATE_SEND_INTERVAL = 0.05
 
 -- Forward declarations.
@@ -23,6 +23,7 @@ local create_remote_tank
 local create_remote_shot
 local handle_server_message
 local websocket_callback
+local get_player_name
 
 -- ---------------------------------------------------------------------------
 -- Logging and validation
@@ -81,6 +82,10 @@ if not self.in_battle or not self.scene_socket then
     return
 end
 
+if type(payload.player_id) == "string" then
+    payload.player_id = get_player_name(self, payload.player_id)
+end
+
 post_to_scene(
 self,
 "/tank_hud#gui",
@@ -97,6 +102,37 @@ self,
 "combat_feed_reset"
 )
 end
+end
+
+local function post_match_timer(self, message)
+if not self.in_battle or not self.scene_socket or type(message) ~= "table" then return end
+post_to_scene(self, "/tank_hud#gui", "match_timer_update", {
+    remaining_ms = tonumber(message.remaining_ms),
+    players_count = tonumber(message.players_count),
+    max_players = tonumber(message.max_players)
+})
+end
+
+local function post_system_killfeed(self, event, nickname)
+if event ~= "player_joined" and event ~= "player_left" then return end
+if not self.in_battle or not self.scene_socket then
+    self.pending_system_events = self.pending_system_events or {}
+    self.pending_system_events[#self.pending_system_events + 1] = {
+        event = event, nickname = nickname or "UNKNOWN"
+    }
+    return
+end
+post_to_scene(self, "/tank_hud#gui", "killfeed_system_event", {
+    event = event, nickname = nickname or "UNKNOWN"
+})
+end
+
+local function flush_system_killfeed(self)
+if not self.in_battle or not self.scene_socket then return end
+for _, event in ipairs(self.pending_system_events or {}) do
+    post_to_scene(self, "/tank_hud#gui", "killfeed_system_event", event)
+end
+self.pending_system_events = {}
 end
 
 -- ---------------------------------------------------------------------------
@@ -129,14 +165,109 @@ end
 return true
 end
 
+local function load_player_profile(self)
+    local ok, data = pcall(function() return sys.load("player.save") end)
+    if not ok or type(data) ~= "table" then data = {} end
+
+    self.client_identity_id = type(data.client_identity_id) == "string"
+        and data.client_identity_id or nil
+    self.session_token = type(data.session_token) == "string"
+        and data.session_token or nil
+
+    if type(data.nickname) ~= "string" then
+        self.nickname = nil
+        return false
+    end
+
+    local nickname = data.nickname:gsub("[%c]", ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if nickname == "" or #nickname > 64 then
+        self.nickname = nil
+        return false
+    end
+
+    self.nickname = nickname
+    if self.player_id then
+        self.player_names = self.player_names or {}
+        self.player_names[self.player_id] = nickname
+    end
+    return true
+end
+
+local function save_player_session(self, identity_id, session_token)
+    local data = {}
+    local ok, existing = pcall(function() return sys.load("player.save") end)
+    if ok and type(existing) == "table" then data = existing end
+
+    if type(identity_id) == "string" and identity_id ~= "" then
+        data.client_identity_id = identity_id
+        self.client_identity_id = identity_id
+    end
+    if type(session_token) == "string" and session_token ~= "" then
+        data.session_token = session_token
+        self.session_token = session_token
+    end
+    if self.nickname then data.nickname = self.nickname end
+
+    local saved, result = pcall(function() return sys.save("player.save", data) end)
+    if not saved or result == false then
+        log("Could not persist session credentials: " .. tostring(result))
+        return false
+    end
+    return true
+end
+
+local function send_authentication(self)
+    load_player_profile(self)
+    return send_json(self, {
+        type = "authenticate",
+        identity_id = self.client_identity_id or "",
+        session_token = self.session_token or ""
+    })
+end
+
+local function send_client_ready(self)
+    if not self.connected or not self.match_assigned then return false end
+    return send_json(self, { type = "client_ready" })
+end
+
+local function request_match_map(self, info)
+    if type(info) ~= "table" then return end
+    self.match_info = info
+    self.match_assigned = true
+    self.loading_match_map = true
+    msg.post("bootstrap:/scene_manager#scene_manager", "load_match_map", {
+        map_id = info.map_id or "",
+        scene = info.scene or "main",
+        collection = info.collection or "/main.collectionc",
+        status = info.status or "running"
+    })
+end
+
+get_player_name = function(self, player_id)
+    if type(player_id) ~= "string" or player_id == "" then
+        return "UNKNOWN"
+    end
+    if player_id == "WORLD" then
+        return "WORLD"
+    end
+    return (self.player_names and self.player_names[player_id]) or player_id
+end
+
 local function send_enter_battle(self)
 if not self.connected then
-log("Cannot enter battle: WebSocket is not connected")
+log("Cannot enter matchmaking: WebSocket is not connected")
 return false
 end
 
-if self.in_battle or self.enter_battle_pending then
+if self.in_battle or self.enter_battle_pending or self.match_assigned then
 return true
+end
+
+-- The auth scene creates player.save after network_manager has initialized.
+-- Reload it immediately before every battle entry.
+if not load_player_profile(self) then
+    log("Cannot enter battle: player.save has no valid nickname")
+    return false
 end
 
 -- Refresh the garage save immediately before battle entry. The manager is
@@ -158,9 +289,11 @@ if loadout_ok and type(loadout) == "table" then
 end
 
 self.enter_battle_pending = true
+self.matchmaking_pending = true
 
 if not send_json(self, {
 type = "enter_battle",
+nickname = self.nickname,
 hull_id = self.hull_id or "light_hull",
 turret_id = self.turret_id or "tank_turret"
 }) then
@@ -168,14 +301,19 @@ self.enter_battle_pending = false
 return false
 end
 
-log("Requested battle entry")
+log("Requested matchmaking")
 return true
 end
 
 local function send_leave_battle(self)
 if not self.connected then
+self.manual_disconnect = true
+self.reconnect_pending = false
 self.in_battle = false
 self.enter_battle_pending = false
+self.match_assigned = false
+self.matchmaking_pending = false
+self.match_info = nil
 reset_combat_feed(self)
 return false
 end
@@ -186,6 +324,11 @@ end
 
 self.in_battle = false
 self.enter_battle_pending = false
+self.match_assigned = false
+self.matchmaking_pending = false
+self.match_info = nil
+self.loading_match_map = false
+self.pending_system_events = {}
 self.local_state = nil
 self.state_timer = 0
 
@@ -252,7 +395,8 @@ self,
 "/tank_hud#gui",
 "chat_message",
 {
-player_id = message.player_id,
+player_id = type(message.nickname) == "string" and message.nickname
+    or get_player_name(self, message.player_id),
 text = message.text,
 timestamp = tonumber(message.timestamp) or 0
 }
@@ -271,7 +415,11 @@ end
 
 post_to_spawner(self, "network_player_ready", {
 player_id = self.player_id,
-spawn_index = self.spawn_index
+spawn_index = self.spawn_index,
+nickname = self.nickname,
+life_state = self.server_life_state or "alive",
+hull_id = self.hull_id,
+turret_id = self.turret_id
 })
 end
 
@@ -296,6 +444,11 @@ or player.id == self.player_id then
 return
 end
 
+if type(player.nickname) == "string" and player.nickname ~= "" then
+    self.player_names = self.player_names or {}
+    self.player_names[player.id] = player.nickname
+end
+
 if player.life_state == "dead"
 or player.life_state == "inactive" then
 remove_remote_player(self, player.id)
@@ -314,6 +467,7 @@ body_angle = player.body_angle or 0,
 turret_angle = player.turret_angle or 0,
 hull_id = player.hull_id or "light_hull",
 turret_id = player.turret_id or "tank_turret",
+nickname = player.nickname or get_player_name(self, player.id),
 state_seq = player.state_seq or 0
 })
 end
@@ -328,6 +482,11 @@ or type(player.id) ~= "string"
 or player.id == ""
 or player.id == self.player_id then
 return
+end
+
+if type(player.nickname) == "string" and player.nickname ~= "" then
+    self.player_names = self.player_names or {}
+    self.player_names[player.id] = player.nickname
 end
 
 if player.life_state == "dead"
@@ -345,6 +504,7 @@ turret_angle = 0,
 hull_id = "light_hull",
 turret_id = "tank_turret",
 state_seq = 0,
+nickname = self.player_names and self.player_names[player.id] or player.id,
 life_state = "alive"
 }
 
@@ -376,7 +536,9 @@ if type(player.hull_id) == "string"
 and player.hull_id:match("^[%w_%-]+$") then
     old.hull_id = player.hull_id
 end
-if player.turret_id == "tank_turret" or player.turret_id == "twin_barrel_turret" then
+if player.turret_id == "tank_turret"
+    or player.turret_id == "twin_barrel_turret"
+    or player.turret_id == "heavy_turret" then
 old.turret_id = player.turret_id
 end
 
@@ -385,6 +547,10 @@ old.state_seq = player.state_seq
 end
 end
 
+if type(player.nickname) == "string" and player.nickname ~= "" then
+    old.nickname = player.nickname
+end
+old.nickname = old.nickname or (self.player_names and self.player_names[player.id]) or player.id
 old.life_state = player.life_state or old.life_state or "alive"
 
 self.remote_players[player.id] = old
@@ -405,6 +571,9 @@ player_id = player_id
 
 self.remote_instances[player_id] = nil
 self.remote_players[player_id] = nil
+if self.player_names then
+    self.player_names[player_id] = nil
+end
 
 log("Requested removal of remote tank for " .. player_id)
 end
@@ -471,6 +640,20 @@ self.remote_instances[player_id] = {
 root_id = message.root_id,
 ids = registered_ids
 }
+
+-- tank_spawner initially labels remote tanks with their server ID.
+-- Replace that text with the nickname once the remote name object is registered.
+local name_object_id = type(message.ids) == "table"
+    and message.ids[hash("/tank_name")] or nil
+local remote_player = self.remote_players[player_id]
+if name_object_id and remote_player and type(remote_player.nickname) == "string" then
+    local name_url = msg.url(self.scene_socket, name_object_id, hash("tank_name1"))
+    pcall(msg.post, name_url, "set_player_name", {
+        name = remote_player.nickname,
+        hide_name = false,
+        anchor_id = message.root_id
+    })
+end
 
 log("Registered remote tank IDs for " .. player_id
 .. " (" .. #registered_ids .. " objects)")
@@ -558,27 +741,134 @@ end
 return
 
 elseif message.type == "welcome" then
+self.reconnect_pending = false
+self.reconnect_elapsed = 0
+self.reconnect_attempt_timer = 0
 self.player_id = message.player_id
-self.spawn_index = nil
-self.in_battle = false
+save_player_session(self, message.identity_id, message.session_token)
+if self.player_id and self.nickname then
+    self.player_names = self.player_names or {}
+    self.player_names[self.player_id] = self.nickname
+end
+self.spawn_index = tonumber(message.spawn_index)
 self.enter_battle_pending = false
 
-log("Connected as " .. tostring(self.player_id))
+log("Authenticated as " .. tostring(self.player_id)
+    .. (message.reconnected and " (reconnected)" or ""))
 
-if self.scene_name == "battle" and self.scene_socket then
-send_enter_battle(self)
+if message.in_battle and type(message.room) == "table" then
+    self.matchmaking_pending = false
+    self.match_assigned = true
+    self.in_battle = false
+    self.match_info = message.room
+    if message.room.status == "running" then
+        request_match_map(self, message.room)
+    else
+        msg.post("bootstrap:/scene_manager#scene_manager", "matchmaking_waiting", {
+            room_id = message.room.room_id,
+            map_id = message.room.map_id,
+            players_count = message.room.players_count,
+            max_players = message.room.max_players
+        })
+    end
+elseif self.matchmaking_pending then
+    send_enter_battle(self)
+elseif self.scene_name == "battle" and self.scene_socket then
+    self.match_assigned = false
+    self.matchmaking_pending = false
+    send_enter_battle(self)
 end
+
+elseif message.type == "authentication_rejected" then
+self.reconnect_pending = false
+self.match_assigned = false
+self.matchmaking_pending = false
+log("Authentication rejected: " .. tostring(message.reason))
+
+elseif message.type == "match_found" then
+self.enter_battle_pending = false
+self.matchmaking_pending = false
+self.match_assigned = true
+self.match_info = message
+log("Assigned to " .. tostring(message.room_id)
+    .. " on map " .. tostring(message.map_id)
+    .. "; room status=" .. tostring(message.status))
+if message.status == "running" then
+    request_match_map(self, message)
+else
+    msg.post("bootstrap:/scene_manager#scene_manager", "matchmaking_waiting", {
+        room_id = message.room_id,
+        map_id = message.map_id,
+        players_count = message.players_count,
+        max_players = message.max_players
+    })
+end
+
+elseif message.type == "match_started" then
+self.match_info = message
+self.match_assigned = true
+self.matchmaking_pending = false
+log("Match started: " .. tostring(message.room_id)
+    .. ", map=" .. tostring(message.map_id))
+request_match_map(self, message)
+
+elseif message.type == "match_ending" then
+self.match_ending = true
+post_to_scene(self, "/tank_hud#gui", "match_ending", {
+    duration_ms = tonumber(message.duration_ms) or 3000
+})
+post_to_spawner(self, "match_ending", {
+    duration_ms = tonumber(message.duration_ms) or 3000
+})
+log("Match ending phase started")
+
+elseif message.type == "match_finished" then
+local results = type(message.results) == "table" and message.results or {}
+log("Received match_finished for room " .. tostring(message.room_id)
+    .. "; results=" .. tostring(#results))
+
+self.match_ending = false
+self.loading_match_map = false
+self.pending_system_events = {}
+self.in_battle = false
+self.match_assigned = false
+self.matchmaking_pending = false
+self.enter_battle_pending = false
+self.local_state = nil
+self.state_timer = 0
+clear_remote_players(self)
+msg.post("bootstrap:/scene_manager#scene_manager", "match_finished", {
+    results = results,
+    room_id = message.room_id
+})
 
 elseif message.type == "enter_battle_accepted" then
 self.enter_battle_pending = false
+self.matchmaking_pending = false
+self.match_assigned = true
 self.in_battle = true
+self.match_ending = false
+self.match_info = message
 reset_combat_feed(self)
 
 if type(message.player_id) == "string" then
 self.player_id = message.player_id
 end
+if type(message.nickname) == "string" and message.nickname ~= "" then
+    self.nickname = message.nickname
+end
+self.player_names = self.player_names or {}
+if self.player_id and self.nickname then
+    self.player_names[self.player_id] = self.nickname
+end
 
 self.spawn_index = tonumber(message.spawn_index)
+self.server_life_state = type(message.self_state) == "table"
+    and message.self_state.life_state or "alive"
+if type(message.self_state) == "table" then
+    if type(message.self_state.hull_id) == "string" then self.hull_id = message.self_state.hull_id end
+    if type(message.self_state.turret_id) == "string" then self.turret_id = message.self_state.turret_id end
+end
 
 log(
 "Entered battle as " .. tostring(self.player_id)
@@ -587,6 +877,11 @@ log(
 
 clear_remote_players(self)
 post_player_ready(self)
+if type(message.self_state) == "table" then
+    post_to_spawner(self, "network_restore_local_state", message.self_state)
+end
+post_match_timer(self, message)
+flush_system_killfeed(self)
 
 for _, player in ipairs(message.players or {}) do
 remember_player(self, player)
@@ -594,6 +889,11 @@ end
 
 elseif message.type == "enter_battle_rejected" then
 self.enter_battle_pending = false
+self.matchmaking_pending = false
+self.match_assigned = false
+self.match_info = nil
+self.pending_system_events = {}
+self.loading_match_map = false
 self.in_battle = false
 self.local_state = nil
 self.state_timer = 0
@@ -601,6 +901,9 @@ self.state_timer = 0
 clear_remote_players(self)
 
 log("Battle entry rejected: " .. tostring(message.reason))
+msg.post("main_menu:/main_menu#gui", "matchmaking_failed", {
+    reason = message.reason or "unknown"
+})
 
 post_to_spawner(
 self,
@@ -618,9 +921,14 @@ log("Server acknowledged readiness")
 
 elseif message.type == "player_joined" then
 remember_player(self, message.player)
+if type(message.player) == "table" then
+    post_system_killfeed(self, "player_joined", message.player.nickname or message.player.id)
+end
 
 elseif message.type == "player_left" then
+local left_nickname = message.nickname or get_player_name(self, message.player_id)
 remove_remote_player(self, message.player_id)
+post_system_killfeed(self, "player_left", left_nickname)
 
 elseif message.type == "player_inactive" then
 remove_remote_player(self, message.player_id)
@@ -629,6 +937,7 @@ elseif message.type == "state" then
     
 remember_player(self, {
 id = message.player_id,
+nickname = message.nickname,
 x = message.x,
 y = message.y,
 body_angle = message.body_angle,
@@ -865,6 +1174,7 @@ reason = message.reason
 
 elseif message.type == "scoreboard" then
 local players = message.players
+post_match_timer(self, message)
 
 if type(players) ~= "table" then
 log("Ignored malformed scoreboard")
@@ -875,14 +1185,14 @@ if not self.in_battle or not self.scene_socket then
 return
 end
 
-local count = math.min(#players, 6)
+local count = math.min(#players, 10)
 
 post_to_scene(self, "/tank_hud#gui", "server_scoreboard_reset", {
 count = count
 })
 
 for index, player in ipairs(players) do
-if index > 6 then
+if index > 10 then
 break
 end
 
@@ -891,7 +1201,8 @@ and type(player.id) == "string" then
 post_to_scene(self, "/tank_hud#gui", "server_scoreboard_row", {
 row = index - 1,
 player_id = player.id,
-name = player.id,
+name = type(player.nickname) == "string" and player.nickname
+    or get_player_name(self, player.id),
 points = tonumber(player.score) or 0,
 damage = tonumber(player.damage_dealt) or 0,
 ping = tonumber(player.ping) or 0,
@@ -907,8 +1218,8 @@ if self.in_battle
 and self.scene_socket
 and type(message.victim_id) == "string" then
 post_to_scene(self, "/tank_hud#gui", "killfeed_event", {
-killer_id = message.killer_id or "WORLD",
-victim_id = message.victim_id
+killer_id = message.killer_nickname or get_player_name(self, message.killer_id or "WORLD"),
+victim_id = message.victim_nickname or get_player_name(self, message.victim_id)
 })
 end
 
@@ -937,20 +1248,24 @@ websocket_callback = function(self, connection, data)
         self.connected = true
         log("Connected to " .. tostring(self.selected_server_id)
             .. " (" .. tostring(self.selected_server_url) .. ")")
-        if self.scene_name == "battle" and self.scene_socket then
-            send_enter_battle(self)
-        end
+        send_authentication(self)
         send_json(self, { type = "server_status" })
 
     elseif data.event == websocket.EVENT_DISCONNECTED then
         if self.connection == connection then self.connection = nil end
         self.connected = false
-        self.player_id = nil
         self.spawn_index = nil
         self.local_state = nil
         self.in_battle = false
         self.enter_battle_pending = false
         self.state_timer = 0
+        if not self.manual_disconnect and (self.match_assigned or self.matchmaking_pending) then
+            if not self.reconnect_pending then
+                self.reconnect_pending = true
+                self.reconnect_elapsed = 0
+                self.reconnect_attempt_timer = 0
+            end
+        end
         clear_remote_players(self)
         post_to_spawner(self, "network_disconnected")
         log("Disconnected: " .. tostring(data.code or data.message or "no reason"))
@@ -990,7 +1305,7 @@ websocket_callback = function(self, connection, data)
     end
 end
 
-local function connect_selected_server(self)
+local function connect_selected_server(self, is_reconnect)
     local server = SERVERS[self.selected_server_index]
     if not server then return false end
 
@@ -998,10 +1313,23 @@ local function connect_selected_server(self)
     self.selected_server_url = server.url
     self.last_connected_users = nil
     self.connected = false
-    self.player_id = nil
-    self.spawn_index = nil
-    self.in_battle = false
-    self.enter_battle_pending = false
+
+    if not is_reconnect then
+        self.player_id = nil
+        self.spawn_index = nil
+        self.in_battle = false
+        self.enter_battle_pending = false
+        self.match_assigned = false
+        self.matchmaking_pending = false
+        self.match_info = nil
+        self.loading_match_map = false
+        self.pending_system_events = {}
+        self.reconnect_pending = false
+        self.reconnect_elapsed = 0
+        self.reconnect_attempt_timer = 0
+        self.manual_disconnect = false
+    end
+
     self.local_state = nil
     self.state_timer = 0
 
@@ -1011,7 +1339,8 @@ local function connect_selected_server(self)
         log("Could not start connection to " .. server.id)
         return false
     end
-    log("Connecting to selected server " .. server.id .. ": " .. server.url)
+    log("Connecting to selected server " .. server.id .. ": " .. server.url
+        .. (is_reconnect and " (reconnect)" or ""))
     return true
 end
 
@@ -1032,9 +1361,23 @@ function init(self)
     self.player_id = nil
     self.spawn_index = nil
     self.in_battle = false
+    self.match_ending = false
     self.enter_battle_pending = false
+    self.match_assigned = false
+    self.matchmaking_pending = false
+    self.match_info = nil
+    self.loading_match_map = false
+    self.pending_system_events = {}
+    self.reconnect_pending = false
+    self.reconnect_elapsed = 0
+    self.reconnect_attempt_timer = 0
+    self.manual_disconnect = false
+    self.client_identity_id = nil
+    self.session_token = nil
     self.remote_players = {}
     self.remote_instances = {}
+    self.player_names = {}
+    self.nickname = nil
     self.local_state = nil
     self.state_timer = 0
 
@@ -1062,11 +1405,35 @@ function init(self)
     .. "/"
     .. tostring(self.turret_id))
 
+    load_player_profile(self)
     log("Connecting to default server " .. self.selected_server_id)
     connect_selected_server(self)
 end
 
 function update(self, dt)
+if self.reconnect_pending then
+    self.reconnect_elapsed = self.reconnect_elapsed + dt
+    self.reconnect_attempt_timer = self.reconnect_attempt_timer + dt
+    if self.reconnect_elapsed >= 30 then
+        self.reconnect_pending = false
+        self.match_assigned = false
+        self.matchmaking_pending = false
+        self.match_info = nil
+        self.in_battle = false
+        self.local_state = nil
+        self.state_timer = 0
+        log("Reconnect window expired on client")
+        if self.scene_name == "battle" then
+            msg.post("bootstrap:/scene_manager#scene_manager", "return_to_menu")
+        end
+    elseif not self.connected and self.connection == nil
+    and self.reconnect_attempt_timer >= 2 then
+        self.reconnect_attempt_timer = 0
+        log("Attempting to reconnect (" .. tostring(math.floor(self.reconnect_elapsed)) .. "s)")
+        connect_selected_server(self, true)
+    end
+end
+
 if not self.connected
 or not self.in_battle
 or self.scene_name ~= "battle"
@@ -1105,7 +1472,29 @@ function on_message(self, message_id, message, sender)
         return
     end
 
-    if message_id == hash("network_get_server_status") then
+    if message_id == hash("network_find_match") then
+        if self.connected then
+            send_enter_battle(self)
+        else
+            log("Cannot search for a match: server is disconnected")
+        end
+        return
+
+    elseif message_id == hash("network_cancel_match") then
+        if self.connected and (self.match_assigned or self.matchmaking_pending) and not self.in_battle then
+            send_json(self, { type = "cancel_match" })
+            self.match_assigned = false
+            self.matchmaking_pending = false
+            self.match_info = nil
+        end
+        return
+
+    elseif message_id == hash("network_match_scene_ready") then
+        self.loading_match_map = false
+        send_client_ready(self)
+        return
+
+    elseif message_id == hash("network_get_server_status") then
         self.menu_sender = sender
 
         if self.connected then
@@ -1147,11 +1536,18 @@ function on_message(self, message_id, message, sender)
 
         if self.in_battle or self.enter_battle_pending then
             send_leave_battle(self)
+        elseif self.match_assigned or self.matchmaking_pending then
+            send_json(self, { type = "cancel_match" })
+            self.match_assigned = false
+            self.matchmaking_pending = false
+            self.match_info = nil
         end
 
         clear_remote_players(self)
 
         local old_connection = self.connection
+        self.manual_disconnect = true
+        self.reconnect_pending = false
         self.connection = nil
         self.connected = false
 
@@ -1162,6 +1558,7 @@ function on_message(self, message_id, message, sender)
         end
 
         self.selected_server_index = requested_index
+        self.manual_disconnect = false
         connect_selected_server(self)
 
         if self.menu_sender then
@@ -1197,7 +1594,9 @@ function on_message(self, message_id, message, sender)
 
         if was_battle_scene
         and (not is_battle_scene or socket_changed) then
-            send_leave_battle(self)
+            if not self.loading_match_map then
+                send_leave_battle(self)
+            end
             clear_remote_players(self)
         end
 
@@ -1210,12 +1609,15 @@ function on_message(self, message_id, message, sender)
         end
 
         if is_battle_scene then
+            self.loading_match_map = false
             if socket_changed then
                 clear_remote_players(self)
             end
 
-            if self.connected then
-                send_enter_battle(self)
+            if self.connected and self.match_assigned then
+                send_client_ready(self)
+            elseif self.connected and self.matchmaking_pending then
+                log("Battle scene loaded while matchmaking is pending")
             end
         else
             self.local_state = nil
@@ -1349,10 +1751,14 @@ send_json(self, {
 elseif message_id == hash("network_disconnect") then
 if self.in_battle or self.enter_battle_pending then
     send_leave_battle(self)
+elseif self.match_assigned or self.matchmaking_pending then
+    send_json(self, { type = "cancel_match" })
 end
 
 clear_remote_players(self)
 
+self.manual_disconnect = true
+self.reconnect_pending = false
 if self.connection ~= nil then
     websocket.disconnect(self.connection)
     self.connection = nil
@@ -1361,12 +1767,17 @@ end
 self.connected = false
 self.in_battle = false
 self.enter_battle_pending = false
+self.match_assigned = false
+self.matchmaking_pending = false
+self.match_info = nil
 self.local_state = nil
 self.state_timer = 0
 end
 end
 
 function final(self)
+self.manual_disconnect = true
+self.reconnect_pending = false
 clear_remote_players(self)
 
 if self.connection ~= nil then

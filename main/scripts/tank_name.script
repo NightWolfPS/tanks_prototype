@@ -1,6 +1,5 @@
 -- tank_name.script
 -- Independent nickname object following its tank.
--- Position follows the hull; rotation remains horizontal.
 -- Defold 1.13.1
 
 local NAME_OFFSET = vmath.vector3(0, 80, 1)
@@ -9,9 +8,7 @@ function init(self)
     self.player_name = "PLAYER"
     self.hidden = true
     self.anchor_id = nil
-
     label.set_text("#label", "")
-
     go.set_rotation(vmath.quat())
 end
 
@@ -24,46 +21,44 @@ local function refresh_label(self)
 end
 
 function update(self, dt)
-    if not self.anchor_id then
-        return
-    end
-
-    local ok, tank_position = pcall(
-    go.get_world_position,
-    self.anchor_id
-)
-
-if not ok or not tank_position then
-    return
-end
-
--- Follow the tank in world coordinates.
-go.set_position(tank_position + NAME_OFFSET)
-
--- Never inherit the tank's rotation.
-go.set_rotation(vmath.quat())
+    if not self.anchor_id then return end
+    local ok, tank_position = pcall(go.get_world_position, self.anchor_id)
+    if not ok or not tank_position then return end
+    go.set_position(tank_position + NAME_OFFSET)
+    go.set_rotation(vmath.quat())
 end
 
 function on_message(self, message_id, message, sender)
-if message_id == hash("set_player_name") then
-    local name = tostring(message.name or "PLAYER")
+    if message_id == hash("set_player_name") then
+        local name = tostring(message.name or "PLAYER")
+        local hide_name = message.hide_name == true
 
-    if #name > 18 then
-        name = string.sub(name, 1, 18)
+        -- Local tanks historically send hide_name=true because the old UI
+        -- used to suppress the owner's own label. The profile now supplies it.
+        if hide_name then
+            local ok, profile = pcall(function()
+                return sys.load("player.save")
+            end)
+            if ok and type(profile) == "table"
+            and type(profile.nickname) == "string"
+            and profile.nickname ~= "" then
+                name = profile.nickname
+                hide_name = false
+            end
+        end
+
+        if #name > 64 then name = string.sub(name, 1, 64) end
+        self.player_name = name
+        self.hidden = hide_name
+        self.anchor_id = message.anchor_id
+        refresh_label(self)
+
+    elseif message_id == hash("hide_player_name") then
+        self.hidden = true
+        refresh_label(self)
+
+    elseif message_id == hash("show_player_name") then
+        self.hidden = false
+        refresh_label(self)
     end
-
-    self.player_name = name
-    self.hidden = message.hide_name == true
-    self.anchor_id = message.anchor_id
-
-    refresh_label(self)
-
-elseif message_id == hash("hide_player_name") then
-    self.hidden = true
-    refresh_label(self)
-
-elseif message_id == hash("show_player_name") then
-    self.hidden = false
-    refresh_label(self)
-end
 end

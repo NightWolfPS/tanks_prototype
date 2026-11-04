@@ -34,3 +34,19 @@ embedded_components {
   "dynamic_prototype: true\n"
   ""
 }
+embedded_components {
+  id: "middle_hull_factory"
+  type: "factory"
+  data: "prototype: \"/main/objects/hulls/middle_hull_prev.go\"\n"
+  "load_dynamically: true\n"
+  "dynamic_prototype: true\n"
+  ""
+}
+embedded_components {
+  id: "heavy_turret_factory"
+  type: "factory"
+  data: "prototype: \"/main/objects/turrets/heavy_turret_prev.go\"\n"
+  "load_dynamically: true\n"
+  "dynamic_prototype: true\n"
+  ""
+}

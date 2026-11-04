@@ -25,6 +25,11 @@ local MODULES = {
 			name = "Weight hull",
 			description = "Тяжелый корпус",
 		},
+		{
+			id = "middle_hull",
+			name = "Middle hull",
+			description = "175 HP / скорость 95",
+		},
 	},
 
 	turrets = {
@@ -37,6 +42,11 @@ local MODULES = {
 			id = "twin_barrel_turret",
 			name = "twin_barrel_turret",
 			description = "Двуствольная пушка",
+		},
+		{
+			id = "heavy_turret",
+			name = "heavy_turret",
+			description = "65 урона / перезарядка 6 с",
 		},
 	},
 }

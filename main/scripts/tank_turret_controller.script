@@ -209,10 +209,12 @@ function init(self)
 self.turret_left = false
 self.turret_right = false
 self.fire_pressed = false
+self.network_disconnected = false
 
 -- Menus and chat block local turret controls.
 self.battle_menu_open = false
 self.chat_open = false
+self.match_ending = false
 
 self.fire_timer = 0
 self.shot_counter = 0
@@ -271,6 +273,18 @@ end
 function on_input(self, action_id, action)
 if not self.is_local_player then
 return false
+end
+
+if self.match_ending then
+    clear_turret_input(self)
+    return true
+end
+
+if self.network_disconnected then
+    self.turret_left = false
+    self.turret_right = false
+    self.fire_pressed = false
+    return true
 end
 
 -- While the battle menu is open, block turret controls,
@@ -344,6 +358,18 @@ end
 return
 end
 
+if self.match_ending then
+    clear_turret_input(self)
+    update_laser(self)
+    return
+end
+
+if self.network_disconnected then
+    clear_turret_input(self)
+    update_laser(self)
+    return
+end
+
 self.stun_timer = math.max(0, self.stun_timer - dt)
 
 -- Do not rotate or fire while the menu is open.
@@ -403,6 +429,26 @@ send_reload_progress(self)
 end
 
 function on_message(self, message_id, message, sender)
+if message_id == hash("match_ending") then
+    if self.is_local_player then
+        self.match_ending = true
+        clear_turret_input(self)
+    end
+    return
+end
+
+if message_id == hash("network_connection_state") then
+    if self.is_local_player then
+        self.network_disconnected = message.connected ~= true
+        if self.network_disconnected then
+            self.turret_left = false
+            self.turret_right = false
+            self.fire_pressed = false
+        end
+    end
+    return
+end
+
     if message_id == hash("set_turret_reference") then
         self.turret_id = message.turret_id
         print("[PLAYER] Turret reference assigned: " .. tostring(self.turret_id))
