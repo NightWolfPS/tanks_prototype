@@ -1,0 +1,313 @@
+
+-- scene_manager.script
+-- Persistent scene switching through Collection Proxy.
+-- Defold 1.13.1
+-- Network manager remains in bootstrap.collection.
+
+local AUTH_PROXY = "#auth_proxy"
+local MENU_PROXY = "#main_menu_proxy"
+local BATTLE_PROXY = "#battle_proxy"
+local GARAGE_PROXY = "#garage_proxy"
+local MATCH_SCORE_PROXY = "#match_score_proxy"
+
+local NETWORK_MANAGER_URL = msg.url("bootstrap:/network_manager#network_manager")
+
+local SCENES = {
+    auth = {
+        proxy = AUTH_PROXY,
+        socket = "auth"
+    },
+    main_menu = {
+        proxy = MENU_PROXY,
+        socket = "main_menu"
+    },
+    battle = {
+        proxy = BATTLE_PROXY,
+        socket = "main"
+    },
+    garage = {
+        proxy = GARAGE_PROXY,
+        socket = "garage"
+    },
+    match_score = {
+        proxy = MATCH_SCORE_PROXY,
+        socket = "match_score"
+    }
+}
+
+local function log(message)
+    print("[SCENE MANAGER] " .. tostring(message))
+end
+
+local function deliver_match_results(self)
+    if self.active_scene ~= "match_score" or not self.match_score_ready then
+        return
+    end
+    if type(self.pending_match_results) ~= "table" then
+        log("Match score GUI is ready, but no results are pending")
+        return
+    end
+
+    local results = self.pending_match_results
+    log("Delivering match results to GUI; players=" .. tostring(#results))
+    msg.post(msg.url("match_score:/match_score#match_score"), "match_score_data", {
+        results = results
+    })
+    self.pending_match_results = nil
+end
+
+local function notify_network(scene_name, socket_name)
+    msg.post(NETWORK_MANAGER_URL, "network_scene_changed", {
+        scene = scene_name or "none",
+        socket = socket_name or ""
+    })
+
+    log("Network scene updated: " .. tostring(scene_name or "none")
+    .. ", socket: " .. tostring(socket_name or ""))
+end
+
+local function load_target_proxy(self)
+    if not self.target_proxy then
+        log("No target proxy set; transition cancelled")
+        self.transitioning = false
+        notify_network("none", "")
+        return
+    end
+
+    log("Loading scene " .. tostring(self.target_scene)
+    .. " through " .. tostring(self.target_proxy))
+
+    if self.target_scene == "battle" and self.target_collection then
+        local call_ok, changed, result = pcall(
+            collectionproxy.set_collection,
+            self.target_proxy,
+            self.target_collection
+        )
+        if not call_ok or not changed then
+            log("Failed to set battle collection " .. tostring(self.target_collection)
+                .. ": " .. tostring(call_ok and result or changed))
+            self.transitioning = false
+            return
+        end
+    end
+
+    msg.post(self.target_proxy, "load")
+end
+
+local function load_scene(self, scene_name)
+    local target = SCENES[scene_name]
+
+    if not target then
+        log("Unknown scene: " .. tostring(scene_name))
+        return
+    end
+
+    if self.transitioning then
+        log("Scene transition already in progress")
+        return
+    end
+
+    if self.active_scene == scene_name then
+        log("Scene is already active: " .. scene_name)
+        return
+    end
+
+    self.transitioning = true
+    if scene_name ~= "match_score" then
+        self.match_score_ready = false
+    end
+    self.target_scene = scene_name
+    self.target_proxy = target.proxy
+    self.target_socket = target.socket
+
+    notify_network("none", "")
+
+    if self.active_proxy then
+        log("Unloading current scene " .. tostring(self.active_scene)
+        .. " through " .. tostring(self.active_proxy))
+
+        msg.post(self.active_proxy, "unload")
+    else
+        load_target_proxy(self)
+    end
+end
+
+
+function init(self)
+    log("init entered")
+
+    self.active_scene = nil
+    self.active_proxy = nil
+    self.target_scene = "auth"
+    self.target_proxy = AUTH_PROXY
+    self.target_socket = SCENES.auth.socket
+    self.transitioning = true
+
+    self.garage_available = false
+    self.active_map_id = nil
+    self.target_map_id = nil
+    self.target_collection = nil
+    self.pending_match_finish = false
+    self.pending_match_results = nil
+    self.match_score_ready = false
+    self.pending_match_map = nil
+    self.pending_waiting_message = nil
+
+    -- IMPORTANT:
+    -- The Game Object holding Collection Proxies must acquire input focus.
+    -- This allows input to reach GUI scripts in proxy-loaded collections.
+    msg.post(".", "acquire_input_focus")
+    log("Scene manager acquired input focus for collection proxies")
+
+    notify_network("none", "")
+    load_target_proxy(self)
+end
+
+
+function on_message(self, message_id, message, sender)
+    if message_id == hash("load_match_map") then
+        local map_id = message.map_id
+        local collection = message.collection
+        local socket_name = message.scene
+        if type(map_id) ~= "string" or map_id == ""
+        or type(collection) ~= "string" or collection == ""
+        or type(socket_name) ~= "string" or socket_name == "" then
+            log("Rejected incomplete match map assignment")
+            return
+        end
+
+        if self.transitioning then
+            if self.target_scene == "battle" and self.target_map_id == map_id then
+                return
+            end
+            self.pending_match_map = message
+            log("Queued map assignment until the current scene transition finishes")
+            return
+        end
+
+        if self.active_scene == "battle" and self.active_map_id == map_id then
+            msg.post(NETWORK_MANAGER_URL, "network_match_scene_ready")
+            return
+        end
+
+        self.transitioning = true
+        self.target_scene = "battle"
+        self.target_proxy = BATTLE_PROXY
+        self.target_socket = socket_name
+        self.target_collection = collection
+        self.target_map_id = map_id
+        notify_network("none", "")
+        if self.active_proxy then
+            msg.post(self.active_proxy, "unload")
+        else
+            load_target_proxy(self)
+        end
+        return
+
+    elseif message_id == hash("matchmaking_waiting") then
+        if self.active_scene == "main_menu" and not self.transitioning then
+            local menu_url = msg.url("main_menu:/main_menu#gui")
+            msg.post(menu_url, "matchmaking_waiting", message)
+        else
+            self.pending_waiting_message = message
+        end
+        return
+
+    elseif message_id == hash("match_finished") then
+        self.active_map_id = nil
+        self.pending_match_map = nil
+        self.pending_waiting_message = nil
+        self.pending_match_results = type(message.results) == "table" and message.results or {}
+        self.match_score_ready = false
+        log("Received match_finished; results=" .. tostring(#self.pending_match_results))
+        if self.transitioning then
+            self.pending_match_finish = true
+        else
+            load_scene(self, "match_score")
+        end
+        return
+
+    elseif message_id == hash("match_score_ready") then
+        self.match_score_ready = true
+        log("Match score GUI reported ready")
+        deliver_match_results(self)
+        return
+
+    elseif message_id == hash("auth_completed") then
+        load_scene(self, "main_menu")
+        return
+    elseif message_id == hash("open_battle") then
+        load_scene(self, "battle")
+        return
+    elseif message_id == hash("open_garage") then
+        load_scene(self, "garage")
+        return
+    elseif message_id == hash("return_to_menu") then
+        load_scene(self, "main_menu")
+        return
+    end
+
+    if message_id == hash("proxy_loaded") then
+        log("proxy_loaded from " .. tostring(sender)
+        .. "; initializing and enabling " .. tostring(self.target_scene))
+
+        -- Initialize and enable the loaded collection.
+        msg.post(sender, "init")
+        msg.post(sender, "enable")
+
+        self.active_scene = self.target_scene
+        self.active_proxy = sender
+        self.active_map_id = self.target_scene == "battle" and self.target_map_id or nil
+        self.transitioning = false
+
+        notify_network(self.active_scene, self.target_socket)
+
+        if self.active_scene == "match_score" then
+            self.match_score_ready = false
+            log("Match score scene loaded; waiting for GUI readiness")
+        end
+
+        log("Scene activation requested: " .. tostring(self.active_scene)
+        .. ", socket: " .. tostring(self.target_socket)
+        .. ", map: " .. tostring(self.active_map_id))
+
+        if self.pending_match_finish then
+            self.pending_match_finish = false
+            self.pending_match_map = nil
+            self.pending_waiting_message = nil
+            load_scene(self, "match_score")
+            return
+        end
+
+        if self.active_scene == "main_menu" and self.pending_waiting_message then
+            local waiting = self.pending_waiting_message
+            self.pending_waiting_message = nil
+            msg.post(msg.url("main_menu:/main_menu#gui"), "matchmaking_waiting", waiting)
+        end
+
+        if self.pending_match_map then
+            local pending_map = self.pending_match_map
+            self.pending_match_map = nil
+            msg.post(".", "load_match_map", pending_map)
+        end
+
+    elseif message_id == hash("proxy_unloaded") then
+        log("proxy_unloaded from " .. tostring(sender))
+
+        self.active_scene = nil
+        self.active_proxy = nil
+
+        if self.pending_match_finish then
+            self.pending_match_finish = false
+            self.pending_match_map = nil
+            self.pending_waiting_message = nil
+            self.target_scene = "match_score"
+            self.target_proxy = MATCH_SCORE_PROXY
+            self.target_socket = SCENES.match_score.socket
+            self.target_collection = nil
+            self.target_map_id = nil
+        end
+
+        load_target_proxy(self)
+    end
+end

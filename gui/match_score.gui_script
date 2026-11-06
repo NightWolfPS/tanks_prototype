@@ -1,0 +1,111 @@
+-- match_score.gui_script
+-- Match results screen. All interface nodes are created dynamically.
+-- Defold 1.13.1
+
+local TEXT_SCALE = (32 / 72) * (2 / 3) -- Дополнительное уменьшение текста ещё на треть.
+local COLOR_TITLE = vmath.vector4(1.0, 0.84, 0.42, 1.0)
+local COLOR_TEXT = vmath.vector4(0.92, 0.94, 0.96, 1.0)
+local COLOR_MUTED = vmath.vector4(0.62, 0.68, 0.72, 1.0)
+local COLOR_BUTTON = vmath.vector4(0.18, 0.24, 0.27, 1.0)
+local COLOR_BUTTON_TEXT = vmath.vector4(1, 1, 1, 1)
+
+local function add_text(self, x, y, text, color, scale)
+    local node = gui.new_text_node(vmath.vector3(x, y, 1), text)
+    gui.set_font(node, "ru")
+    gui.set_color(node, color)
+    gui.set_scale(node, vmath.vector3((scale or 0.8) * TEXT_SCALE, (scale or 0.8) * TEXT_SCALE, 1))
+    gui.set_pivot(node, gui.PIVOT_CENTER)
+    self.nodes[#self.nodes + 1] = node
+    return node
+end
+
+local function clear_nodes(self)
+    for _, node in ipairs(self.nodes or {}) do
+        gui.delete_node(node)
+    end
+    self.nodes = {}
+end
+
+local function render_results(self, results)
+    clear_nodes(self)
+    local width, height = gui.get_width(), gui.get_height()
+    add_text(self, width * 0.5, height - 70, "ИТОГИ МАТЧА", COLOR_TITLE, 1.35)
+    add_text(self, width * 0.5, height - 125,
+        "МЕСТО       ИГРОК                 ОЧКИ     УБИЙСТВА   СМЕРТИ   УРОН",
+        COLOR_MUTED, 0.58)
+
+    if type(results) ~= "table" then results = {} end
+    local row_y = height - 165
+    local row_step = 34
+    for index, player in ipairs(results) do
+        if index > 10 then break end
+        local nickname = tostring(player.nickname or player.id or "UNKNOWN")
+        if #nickname > 18 then nickname = string.sub(nickname, 1, 18) end
+        local line = string.format("%2d.   %-18s   %5d       %3d        %3d    %6d",
+            index, nickname,
+            tonumber(player.score) or 0,
+            tonumber(player.kills) or 0,
+            tonumber(player.deaths) or 0,
+            tonumber(player.damage_dealt) or 0)
+        add_text(self, width * 0.5, row_y, line,
+            index == 1 and COLOR_TITLE or COLOR_TEXT, 0.68)
+        row_y = row_y - row_step
+    end
+
+    if #results == 0 then
+        add_text(self, width * 0.5, height * 0.55,
+            "Статистика матча недоступна", COLOR_MUTED, 0.85)
+    end
+
+    self.button_width = 300
+    self.button_height = 58
+    self.button_x = width * 0.5
+    self.button_y = 65
+    self.button_node = gui.new_box_node(
+        vmath.vector3(self.button_x, self.button_y, 0),
+        vmath.vector3(self.button_width, self.button_height, 1))
+    gui.set_color(self.button_node, COLOR_BUTTON)
+    self.nodes[#self.nodes + 1] = self.button_node
+    add_text(self, self.button_x, self.button_y, "В ГЛАВНОЕ МЕНЮ", COLOR_BUTTON_TEXT, 0.85)
+end
+
+function init(self)
+    self.nodes = {}
+    self.results = {}
+    self.button_node = nil
+    self.button_width = 300
+    self.button_height = 58
+    self.button_x = gui.get_width() * 0.5
+    self.button_y = 65
+    self.waiting_for_results = true
+    msg.post(".", "acquire_input_focus")
+    render_results(self, self.results)
+
+    -- Tell the persistent scene manager that this GUI script has initialized
+    -- and can safely receive the final match results.
+    msg.post("bootstrap:/scene_manager#scene_manager", "match_score_ready")
+end
+
+function on_message(self, message_id, message, sender)
+    if message_id == hash("match_score_data") then
+        self.results = type(message.results) == "table" and message.results or {}
+        self.waiting_for_results = false
+        print("[MATCH SCORE] Received results; players=" .. tostring(#self.results))
+        render_results(self, self.results)
+    end
+end
+
+function on_input(self, action_id, action)
+    if action_id == hash("touch") and action.pressed then
+        local half_w = self.button_width * 0.5
+        local half_h = self.button_height * 0.5
+        if action.x >= self.button_x - half_w
+        and action.x <= self.button_x + half_w
+        and action.y >= self.button_y - half_h
+        and action.y <= self.button_y + half_h then
+            msg.post("bootstrap:/scene_manager#scene_manager", "return_to_menu")
+            return true
+        end
+    end
+    return true
+end

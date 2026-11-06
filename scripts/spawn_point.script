@@ -1,0 +1,35 @@
+-- spawn_point.script
+-- Registers a spawn point with the player and bot spawners.
+-- Defold 1.13.1
+
+function init(self)
+    local own_url = msg.url()
+    local scene_socket = own_url.socket
+
+    local tank_spawner_url = msg.url(
+        scene_socket,
+        "/tank_spawner",
+        "tank_spawner"
+    )
+
+    local bot_spawner_url = msg.url(
+        scene_socket,
+        "/bot_spawner",
+        "bot_spawner"
+    )
+
+    local position = go.get_position()
+    local rotation = go.get_rotation()
+
+    local data = {
+        position = position,
+        rotation = rotation
+    }
+
+    msg.post(tank_spawner_url, "register_spawn_point", data)
+    msg.post(bot_spawner_url, "register_spawn_point", data)
+
+    print("[SPAWN POINT] Own URL: " .. tostring(own_url))
+    print("[SPAWN POINT] Scene socket: " .. tostring(scene_socket))
+    print("[SPAWN POINT] Registered. Position: " .. tostring(position))
+end

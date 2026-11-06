@@ -1,0 +1,622 @@
+-- tank_controller.script
+-- Local tank movement/health plus remote-player interpolation.
+-- Defold 1.13.1
+
+go.property("move_speed", 180)
+go.property("turn_speed", 120)
+go.property("max_hp", 100)
+go.property("is_local_player", true)
+
+
+-- The network manager is persistent and belongs to bootstrap.
+local NETWORK_URL = msg.url("bootstrap:/network_manager#network_manager")
+
+-- Scene-local URLs are created in init() from this instance's socket.
+local function scene_url(self, path, fragment)
+    return msg.url(self.collection_socket, path, fragment)
+end
+
+local GROUP_TANK = hash("tank")
+local REMOTE_INTERPOLATION_SPEED = 14
+local REMOTE_TELEPORT_DISTANCE = 250
+
+-- local TURRET_CONTROLLER_ID = hash("turret_controller")
+
+local function clamp(value, min_value, max_value)
+    return math.max(min_value, math.min(max_value, value))
+end
+
+local function angle_difference(from_angle, to_angle)
+    return (to_angle - from_angle + math.pi) % (2 * math.pi) - math.pi
+end
+
+-- Send status effects to the currently equipped turret.
+local function send_turret_status(self, effects)
+    if not self.turret_id then
+        print("[PLAYER] Cannot send turret status: turret ID is not assigned")
+        return
+    end
+
+    local turret_url = msg.url(
+    self.collection_socket,
+    self.turret_id,
+    self.turret_controller_id
+)
+
+pcall(msg.post, turret_url, "status_effects", {
+    effects = effects or {}
+})
+end
+
+local function update_health_hud(self)
+if not self.is_local_player then
+    return
+end
+
+msg.post(self.HUD_URL, "health_update", {
+    health = self.hp,
+    max_health = self.max_hp
+})
+end
+
+-- Send the local tank state, reading rotation from the actual turret ID.
+local function send_network_state(self)
+if not self.is_local_player or self.dead then
+    return
+end
+
+local position = go.get_position()
+local turret_angle = 0
+
+if self.turret_id then
+    local ok, turret_rotation = pcall(
+    go.get_world_rotation,
+    self.turret_id
+)
+
+if ok and turret_rotation then
+    local _, _, angle_degrees =
+    vmath.quat_to_euler(turret_rotation)
+
+    turret_angle = math.rad(angle_degrees)
+end
+end
+
+msg.post(NETWORK_URL, "network_set_state", {
+x = position.x,
+y = position.y,
+body_angle = self.hull_angle,
+turret_angle = turret_angle,
+})
+end
+
+local function update_engine_sound(self)
+local is_moving =
+self.move_forward or
+self.move_backward or
+self.turn_left or
+self.turn_right
+
+if is_moving then
+if not self.engine_sound_playing then
+    sound.stop("#engine_idle")
+    sound.play("#engine")
+    self.engine_sound_playing = true
+end
+else
+if self.engine_sound_playing then
+    sound.stop("#engine")
+    sound.play("#engine_idle")
+    self.engine_sound_playing = false
+end
+end
+end
+
+local function clear_movement_input(self)
+self.move_forward = false
+self.move_backward = false
+self.turn_left = false
+self.turn_right = false
+
+update_engine_sound(self)
+end
+
+local function kill_player(self, killer_id)
+if self.dead or not self.is_local_player then
+return
+end
+
+self.dead = true
+clear_movement_input(self)
+
+print("[PLAYER] Destroyed")
+update_health_hud(self)
+
+-- The server identifies the victim from this WebSocket connection.
+msg.post(NETWORK_URL, "network_player_killed", {
+killer_id = type(killer_id) == "string" and killer_id or ""
+})
+
+msg.post(self.BOT_SPAWNER_URL, "player_died", {
+player_id = go.get_id(),
+killer_id = killer_id
+})
+
+msg.post(self.TANK_SPAWNER_URL, "player_destroyed")
+end
+
+local function update_remote_transform(self, dt)
+if not self.remote_target_position then
+return
+end
+
+local current_position = go.get_position()
+local delta = self.remote_target_position - current_position
+local alpha = clamp(dt * REMOTE_INTERPOLATION_SPEED, 0, 1)
+
+if vmath.length(delta) >= REMOTE_TELEPORT_DISTANCE then
+go.set_position(self.remote_target_position)
+self.hull_angle = self.remote_target_angle
+else
+go.set_position(current_position + delta * alpha)
+
+self.hull_angle = self.hull_angle
++ angle_difference(
+self.hull_angle,
+self.remote_target_angle
+) * alpha
+end
+
+go.set_rotation(vmath.quat_rotation_z(self.hull_angle))
+end
+
+function init(self)
+    self.collection_socket = msg.url().socket
+    self.TANK_SPAWNER_URL = scene_url(self, "/tank_spawner", "tank_spawner")
+    self.BOT_SPAWNER_URL = scene_url(self, "/bot_spawner", "bot_spawner")
+    self.HUD_URL = scene_url(self, "/tank_hud", "gui")
+self.CAMERA_URL = scene_url(self, "/camera", "camera")
+self.hp = self.max_hp
+self.dead = false
+self.slow_timer = 0
+self.stun_timer = 0
+self.correction = vmath.vector3(0, 0, 0)
+
+self.move_forward = false
+self.move_backward = false
+self.turn_left = false
+self.turn_right = false
+
+-- Actual turret Game Object ID is assigned by tank_spawner.
+self.turret_id = nil
+self.turret_controller_id = nil
+
+-- Battle menu blocks only local player input.
+self.battle_menu_open = false
+self.chat_open = false
+self.match_ending = false
+
+self.engine_sound_playing = false
+
+local _, _, angle_degrees = vmath.quat_to_euler(go.get_rotation())
+
+self.hull_angle = math.rad(angle_degrees)
+self.remote_target_position = nil
+self.remote_target_angle = self.hull_angle
+
+sound.play("#engine_idle")
+
+if self.is_local_player then
+msg.post(".", "acquire_input_focus")
+
+msg.post(self.BOT_SPAWNER_URL, "register_player", {
+player_id = go.get_id()
+})
+
+update_health_hud(self)
+
+print(
+"[PLAYER] Local player initialized. HP: "
+.. self.hp .. "/" .. self.max_hp
+)
+else
+print(
+"[NETWORK] Remote tank controller initialized: "
+.. tostring(go.get_id())
+)
+end
+end
+
+function on_input(self, action_id, action)
+if not self.is_local_player then
+return false
+end
+
+-- While the battle menu is open, block tank movement keys,
+-- but allow Esc and mouse input to reach the HUD.
+if self.match_ending then
+return true
+end
+
+if self.battle_menu_open or self.chat_open then
+if action_id == hash("up")
+or action_id == hash("down")
+or action_id == hash("left")
+or action_id == hash("right") then
+return true
+end
+
+return false
+end
+
+if self.dead then
+return true
+end
+
+if action_id == hash("up") then
+if action.pressed then
+self.move_forward = true
+elseif action.released then
+self.move_forward = false
+end
+
+update_engine_sound(self)
+return true
+
+elseif action_id == hash("down") then
+if action.pressed then
+self.move_backward = true
+elseif action.released then
+self.move_backward = false
+end
+
+update_engine_sound(self)
+return true
+
+elseif action_id == hash("left") then
+if action.pressed then
+self.turn_left = true
+elseif action.released then
+self.turn_left = false
+end
+
+update_engine_sound(self)
+return true
+
+elseif action_id == hash("right") then
+if action.pressed then
+self.turn_right = true
+elseif action.released then
+self.turn_right = false
+end
+
+update_engine_sound(self)
+return true
+end
+
+return false
+end
+
+function update(self, dt)
+-- Remote tanks must continue moving even when the local
+-- player's battle menu is open.
+if not self.is_local_player then
+update_remote_transform(self, dt)
+return
+end
+
+if self.dead then
+return
+end
+
+if self.network_disconnected or self.match_ending then
+    clear_movement_input(self)
+    return
+end
+
+self.correction = vmath.vector3(0, 0, 0)
+
+self.slow_timer = math.max(0, self.slow_timer - dt)
+self.stun_timer = math.max(0, self.stun_timer - dt)
+
+-- Keep local movement stopped while the menu is open.
+-- Do not return here: network state must continue updating.
+if self.battle_menu_open or self.chat_open then
+clear_movement_input(self)
+send_network_state(self)
+return
+end
+
+local movement_factor = self.slow_timer > 0 and 0.55 or 1
+local turn_factor = self.slow_timer > 0 and 0.55 or 1
+
+if self.stun_timer <= 0 then
+if self.turn_left then
+self.hull_angle =
+self.hull_angle
++ math.rad(self.turn_speed) * turn_factor * dt
+end
+
+if self.turn_right then
+self.hull_angle =
+self.hull_angle
+- math.rad(self.turn_speed) * turn_factor * dt
+end
+end
+
+go.set_rotation(vmath.quat_rotation_z(self.hull_angle))
+
+local direction = vmath.rotate(
+vmath.quat_rotation_z(self.hull_angle),
+vmath.vector3(0, 1, 0)
+)
+
+local movement = vmath.vector3(0, 0, 0)
+
+if self.stun_timer <= 0 then
+if self.move_forward then
+movement = movement
++ direction * self.move_speed * movement_factor * dt
+end
+
+if self.move_backward then
+movement = movement
+- direction * self.move_speed * movement_factor * dt
+end
+end
+
+go.set_position(go.get_position() + movement)
+
+send_network_state(self)
+end
+
+function on_message(self, message_id, message, sender)
+if message_id == hash("match_ending") then
+    if self.is_local_player then
+        self.match_ending = true
+        clear_movement_input(self)
+    end
+    return
+end
+
+if message_id == hash("network_connection_state") then
+    if self.is_local_player then
+        self.network_disconnected = message.connected ~= true
+        if self.network_disconnected then clear_movement_input(self) end
+    end
+    return
+end
+
+if message_id == hash("network_restore_state") then
+    if self.is_local_player then
+        if type(message.hp) == "number" then self.hp = message.hp end
+        if type(message.max_hp) == "number" and message.max_hp > 0 then self.max_hp = message.max_hp end
+        if type(message.body_angle) == "number" then
+            self.hull_angle = message.body_angle
+            go.set_rotation(vmath.quat_rotation_z(self.hull_angle))
+        end
+        self.dead = message.life_state == "dead"
+        self.network_disconnected = false
+        clear_movement_input(self)
+        update_health_hud(self)
+        if self.turret_id and type(message.turret_angle) == "number" then
+            local turret_url = msg.url(self.collection_socket, self.turret_id, self.turret_controller_id)
+            pcall(msg.post, turret_url, "network_remote_turret_state", {
+                angle = message.turret_angle - (self.hull_angle or 0)
+            })
+        end
+    end
+    return
+end
+-- Receive the real ID of the selected turret from tank_spawner.
+if message_id == hash("set_turret_reference") then
+    self.turret_id = message.turret_id
+    self.turret_controller_id = message.controller_id
+
+    print(
+    "[PLAYER] Turret reference assigned: "
+    .. tostring(self.turret_id)
+    .. ", controller="
+    .. tostring(self.turret_controller_id)
+)
+
+return
+end
+
+if message_id == hash("battle_menu_state") then
+if self.is_local_player then
+self.battle_menu_open = message.open == true
+
+if self.battle_menu_open then
+clear_movement_input(self)
+end
+end
+
+return
+end
+
+if message_id == hash("chat_state") then
+if self.is_local_player then
+self.chat_open = message.open == true
+
+if self.chat_open then
+clear_movement_input(self)
+end
+end
+
+return
+end
+
+
+
+if message_id == hash("network_remote_state")
+and not self.is_local_player then
+
+local current_position = go.get_position()
+
+self.remote_target_position = vmath.vector3(
+tonumber(message.x) or current_position.x,
+tonumber(message.y) or current_position.y,
+current_position.z
+)
+
+self.remote_target_angle =
+tonumber(message.body_angle) or self.hull_angle
+
+-- Use the actual selected turret, not a fixed object path.
+if self.turret_id then
+    local turret_url = msg.url(
+    self.collection_socket,
+    self.turret_id,
+    self.turret_controller_id
+)
+
+local world_turret_angle =
+tonumber(message.turret_angle) or 0
+
+local target_hull_angle =
+tonumber(message.body_angle) or self.remote_target_angle
+
+msg.post(turret_url, "network_remote_turret_state", {
+angle = world_turret_angle - target_hull_angle
+})
+end
+
+return
+end
+
+if not self.is_local_player or self.dead then
+return
+end
+
+if message_id == hash("take_damage")
+or message_id == hash("network_apply_damage") then
+
+local damage = tonumber(message.damage) or 0
+
+if message_id == hash("network_apply_damage")
+and type(message.hp) == "number" then
+    -- PvP HP is authoritative on the server. Do not subtract the same
+    -- damage locally: use the exact remaining HP sent by the server.
+    if type(message.max_hp) == "number" and message.max_hp > 0 then
+        self.max_hp = message.max_hp
+    end
+    self.hp = math.max(0, math.min(self.max_hp, message.hp))
+    update_health_hud(self)
+elseif damage > 0 then
+    -- Local damage path (bots / offline targets).
+    self.hp = math.max(0, self.hp - damage)
+end
+
+if damage > 0 then
+-- Hit feedback is local-only: direction indicator and camera impulse.
+local hit_x = tonumber(message.hit_x)
+local hit_y = tonumber(message.hit_y)
+if hit_x and hit_y then
+    local tank_position = go.get_world_position()
+    local dx = hit_x - tank_position.x
+    local dy = hit_y - tank_position.y
+    if math.abs(dx) + math.abs(dy) > 0.001 then
+        msg.post(self.HUD_URL, "damage_direction", {
+            angle = math.atan2(dy, dx)
+        })
+        print("[PLAYER] Damage direction sent to HUD")
+    end
+end
+pcall(msg.post, self.CAMERA_URL, "shake", {
+    strength = clamp(1.8 + damage / 35, 2.0, 4.0),
+    duration = 0.22
+})
+
+print("[PLAYER] Took " .. damage .. " damage")
+print("[PLAYER] HP: " .. self.hp .. "/" .. self.max_hp)
+
+update_health_hud(self)
+end
+
+local effects =
+type(message.effects) == "table" and message.effects or {}
+
+if tonumber(effects.slow_duration)
+and effects.slow_duration > 0 then
+
+self.slow_timer = math.max(
+self.slow_timer,
+effects.slow_duration
+)
+
+print(
+"[EFFECT] Slow applied for "
+.. tostring(effects.slow_duration) .. "s"
+)
+end
+
+if tonumber(effects.stun_duration)
+and effects.stun_duration > 0 then
+
+self.stun_timer = math.max(
+self.stun_timer,
+effects.stun_duration
+)
+
+print(
+"[EFFECT] Stun applied for "
+.. tostring(effects.stun_duration) .. "s"
+)
+end
+
+if effects.critical == true or message.critical == true then
+print("[EFFECT] CRITICAL HIT!")
+end
+
+send_turret_status(self, effects)
+
+if self.hp <= 0 then
+kill_player(
+self,
+message.killer_id or message.attacker_id
+)
+end
+
+elseif message_id == hash("network_status_expired") then
+if message.effect == "slow" then
+self.slow_timer = 0
+end
+
+if message.effect == "stun" then
+self.stun_timer = 0
+end
+
+send_turret_status(self, {
+expired = message.effect
+})
+
+elseif message_id == hash("get_hp") then
+msg.post(sender, "hp_response", {
+hp = self.hp,
+max_hp = self.max_hp,
+dead = self.dead
+})
+
+elseif message_id == hash("contact_point_response") then
+-- Resolve local kinematic contacts, including tank-vs-tank.
+-- Remote tanks are moved by their owning clients.
+if message.distance and message.distance > 0 then
+local penetration = message.normal * message.distance
+local projection = vmath.project(
+self.correction,
+penetration
+)
+
+if projection < 1 then
+local compensation = penetration * (1 - projection)
+
+go.set_position(
+go.get_position() + compensation
+)
+
+self.correction = self.correction + compensation
+end
+end
+end
+end

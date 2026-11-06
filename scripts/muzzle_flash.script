@@ -1,0 +1,13 @@
+function init(self)
+	print("[MUZZLE TEST] INIT")
+	self.elapsed = 0
+end
+
+function update(self, dt)
+	self.elapsed = self.elapsed + dt
+
+	if self.elapsed >= 0.08 then
+		print("[MUZZLE TEST] DELETE")
+		go.delete()
+	end
+end

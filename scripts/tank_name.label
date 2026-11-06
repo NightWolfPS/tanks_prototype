@@ -1,0 +1,7 @@
+size {
+  x: 128.0
+  y: 32.0
+}
+text: "Player"
+font: "/main/fonts/ru.font"
+material: "/builtins/fonts/label.material"

@@ -1,0 +1,86 @@
+-- camera_script
+-- Камера плавно следует за динамически созданным танком.
+
+go.property("follow_speed", 8.0)
+
+function init(self)
+    self.target = nil
+    self.follow_position = go.get_position()
+    self.shake_time = 0
+    self.shake_duration = 0
+    self.shake_strength = 0
+    self.shake_offset = vmath.vector3(0, 0, 0)
+    print("[CAMERA] Waiting for tank")
+end
+
+function update(self, dt)
+    local camera_position
+
+    if self.target then
+        local ok, target_position = pcall(function()
+            return go.get_position(self.target)
+        end)
+
+        if ok then
+            local alpha = math.min(dt * self.follow_speed, 1.0)
+            self.follow_position.x = self.follow_position.x
+                + (target_position.x - self.follow_position.x) * alpha
+            self.follow_position.y = self.follow_position.y
+                + (target_position.y - self.follow_position.y) * alpha
+        else
+            self.target = nil
+            print("[CAMERA] Target lost")
+        end
+    end
+
+    if self.target then
+        camera_position = vmath.vector3(
+            self.follow_position.x,
+            self.follow_position.y,
+            self.follow_position.z
+        )
+    else
+        camera_position = go.get_position()
+    end
+
+    -- Screen shake is strictly 2D: Z is never modified. Rebuild the
+    -- position from the stable follow position every frame, so offsets
+    -- cannot accumulate or permanently displace the camera.
+    if self.shake_time > 0 then
+        self.shake_time = math.max(0, self.shake_time - dt)
+        local progress = 1 - (self.shake_time / self.shake_duration)
+        local fade = self.shake_time / self.shake_duration
+        local amplitude = self.shake_strength * fade
+        local phase = progress * 2 * math.pi * 13
+
+        camera_position.x = camera_position.x + math.sin(phase) * amplitude
+        camera_position.y = camera_position.y + math.sin(phase * 1.31 + 0.7) * amplitude * 0.72
+
+        if self.shake_time <= 0 then
+            self.shake_strength = 0
+        end
+    end
+
+    go.set_position(camera_position)
+end
+
+function on_message(self, message_id, message, sender)
+    if message_id == hash("set_target") then
+        self.target = message.target
+        self.follow_position = go.get_position()
+        print("[CAMERA] Target assigned")
+
+    elseif message_id == hash("clear_target") then
+        self.target = nil
+        self.shake_time = 0
+        print("[CAMERA] Target cleared")
+
+    elseif message_id == hash("shake") then
+        local duration = math.max(0.06, math.min(0.4, tonumber(message.duration) or 0.22))
+        local strength = math.max(0, math.min(6, tonumber(message.strength) or 3.0))
+        self.shake_duration = duration
+        self.shake_time = duration
+        self.shake_strength = strength
+        print("[CAMERA] Shake received: " .. tostring(strength) .. " px")
+    end
+end
