@@ -20,6 +20,24 @@ components {
   }
 }
 embedded_components {
+  id: "sprite"
+  type: "sprite"
+  data: "default_animation: \"anim\"\n"
+  "material: \"/builtins/materials/sprite.material\"\n"
+  "textures {\n"
+  "  sampler: \"texture_sampler\"\n"
+  "  texture: \"/main/assets/tank/middle_hull.tilesource\"\n"
+  "}\n"
+  ""
+  position {
+    y: -1.0
+  }
+  scale {
+    x: 0.2
+    y: 0.2
+  }
+}
+embedded_components {
   id: "collisionobject"
   type: "collisionobject"
   data: "type: COLLISION_OBJECT_TYPE_KINEMATIC\n"
@@ -42,32 +60,9 @@ embedded_components {
   "    count: 3\n"
   "    id: \"collision\"\n"
   "  }\n"
-  "  data: 30.0\n"
+  "  data: 31.0\n"
   "  data: 47.5\n"
   "  data: 10.0\n"
   "}\n"
   ""
-}
-embedded_components {
-  id: "middle_hull"
-  type: "sprite"
-  data: "default_animation: \"anim\"\n"
-  "material: \"/builtins/materials/sprite.material\"\n"
-  "size {\n"
-  "  x: 397.0\n"
-  "  y: 522.0\n"
-  "}\n"
-  "textures {\n"
-  "  sampler: \"texture_sampler\"\n"
-  "  texture: \"/main/assets/tank/middle_hull.tilesource\"\n"
-  "}\n"
-  ""
-  position {
-    y: -1.0
-    z: 0.1
-  }
-  scale {
-    x: 0.2
-    y: 0.2
-  }
 }

@@ -1,0 +1,6 @@
+name: "settings"
+instances {
+  id: "settings"
+  prototype: "/main/objects/settings.go"
+}
+scale_along_z: 0

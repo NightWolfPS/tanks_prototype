@@ -1,0 +1,23 @@
+font: "/main/fonts/ru2.ttf"
+material: "/builtins/fonts/font.material"
+size: 48
+outline_alpha: 1.0
+outline_width: 2.7
+all_chars: true
+render_mode: MODE_MULTI_LAYER
+characters: "\320\237\321\200\320\270\320\262\320\265\321\202 \320\274\320\270\321\200!"
+styles {
+  name: "default"
+}
+styles {
+  name: "link"
+  markup: "<color=#1972e5><ul>"
+}
+styles {
+  name: "link:hover"
+  markup: "<color=#4ca5ff>"
+}
+styles {
+  name: "link:active"
+  markup: "<color=#0c4cb2>"
+}

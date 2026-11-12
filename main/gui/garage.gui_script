@@ -1,6 +1,7 @@
 -- garage.gui_script
 -- Defold 1.13.1
 
+local TEXT_SCALE = 36 / 72 -- Компенсация увеличенного размера шрифта (72 px вместо 32 px).
 local COLORS = {
 	background = vmath.vector4(0.035, 0.05, 0.06, 1),
 	panel = vmath.vector4(0.08, 0.11, 0.12, 1),
@@ -17,36 +18,36 @@ local MODULES = {
 	hulls = {
 		{
 			id = "light_hull",
-			name = "Light hull",
+			name = "Лёгкий корпус",
 			description = "Легкий корпус",
 		},
 		{
 			id = "weight_hull",
-			name = "Weight hull",
+			name = "Тяжёлый корпус",
 			description = "Тяжелый корпус",
 		},
 		{
 			id = "middle_hull",
-			name = "Middle hull",
-			description = "175 HP / скорость 95",
+			name = "Средний корпус",
+			description = "Средний корпус",
 		},
 	},
 
 	turrets = {
 		{
 			id = "tank_turret",
-			name = "tank_turret",
+			name = "Обычная пушка",
 			description = "Обычная пушка",
 		},
 		{
 			id = "twin_barrel_turret",
-			name = "twin_barrel_turret",
+			name = "Двуствольная пушка",
 			description = "Двуствольная пушка",
 		},
 		{
 			id = "heavy_turret",
-			name = "heavy_turret",
-			description = "65 урона / перезарядка 6 с",
+			name = "Тяжёлая пушка",
+			description = "Тяжелая пушка",
 		},
 	},
 }
@@ -76,7 +77,7 @@ end
 
 local function create_text(position, value, scale, color)
 	local node = gui.new_text_node(position, value)
-	gui.set_scale(node, vmath.vector3(scale, scale, 1))
+	gui.set_scale(node, vmath.vector3(scale * TEXT_SCALE, scale * TEXT_SCALE, 1))
 	gui.set_color(node, color)
 	return node
 end
@@ -183,7 +184,7 @@ local modules = MODULES[self.section]
 local width = CARD_WIDTH * self.scale
 local height = CARD_HEIGHT * self.scale
 local gap = CARD_GAP * self.scale
-local y = self.height * 0.37
+local y = self.height * 0.32
 
 local visible_count = math.max(
 1,
@@ -242,143 +243,281 @@ end
 
 
 local function build_garage(self)
-destroy_nodes(self)
+	destroy_nodes(self)
 
-self.width = gui.get_width()
-self.height = gui.get_height()
-self.scale = math.min(1, self.width / 1280, self.height / 720)
+	self.width = gui.get_width()
+	self.height = gui.get_height()
+	self.scale = math.min(1, self.width / 1280, self.height / 720)
 
-local center_x = self.width * 0.5
-local center_y = self.height * 0.59
+	local center_x = self.width * 0.5
 
-local preview_w = 360 * self.scale
-local preview_h = 230 * self.scale
+	-- Размеры и положение карточки описания.
+	local info_x = self.width * 0.25
+	local info_y = self.height * 0.64
+	local info_w = self.width * 0.39
+	local info_h = self.height * 0.40
 
-local left = center_x - preview_w * 0.5
-local right = center_x + preview_w * 0.5
-local bottom = center_y - preview_h * 0.5
-local top = center_y + preview_h * 0.5
+	-- Квадратная область превью.
+	-- Центр соответствует положению объекта превью по X.
+	local preview_size = info_h
+	local preview_x = 940 * self.scale
+	local preview_y = info_y
 
--- Фон за пределами области превью.
-add_node(self, create_box(
-vmath.vector3(self.width * 0.5, (top + self.height) * 0.5, 1),
-vmath.vector3(self.width, self.height - top, 0),
-COLORS.background
-))
+	local left = preview_x - preview_size * 0.5
+	local right = preview_x + preview_size * 0.5
+	local bottom = preview_y - preview_size * 0.5
+	local top = preview_y + preview_size * 0.5
 
-add_node(self, create_box(
-vmath.vector3(self.width * 0.5, bottom * 0.5, 1),
-vmath.vector3(self.width, bottom, 0),
-COLORS.background
-))
+	-- Фон за пределами области превью.
+	add_node(self, create_box(
+		vmath.vector3(self.width * 0.5, (top + self.height) * 0.5, 1),
+		vmath.vector3(self.width, self.height - top, 0),
+		COLORS.background
+	))
 
-add_node(self, create_box(
-vmath.vector3(left * 0.5, center_y, 1),
-vmath.vector3(left, preview_h, 0),
-COLORS.background
-))
+	add_node(self, create_box(
+		vmath.vector3(self.width * 0.5, bottom * 0.5, 1),
+		vmath.vector3(self.width, bottom, 0),
+		COLORS.background
+	))
 
-add_node(self, create_box(
-vmath.vector3((right + self.width) * 0.5, center_y, 1),
-vmath.vector3(self.width - right, preview_h, 0),
-COLORS.background
-))
+	add_node(self, create_box(
+		vmath.vector3(left * 0.5, preview_y, 1),
+		vmath.vector3(left, preview_size, 0),
+		COLORS.background
+	))
 
--- Большая панель с отверстием под превью.
--- Не создаём непрозрачный прямоугольник поверх центра.
-add_node(self, create_box(
-vmath.vector3(self.width * 0.5, self.height * 0.5, 0.9),
-vmath.vector3(self.width * 0.92, self.height * 0.88, 0),
-vmath.vector4(
-COLORS.panel.x,
-COLORS.panel.y,
-COLORS.panel.z,
-0.45
-)
-))
+	add_node(self, create_box(
+		vmath.vector3((right + self.width) * 0.5, preview_y, 1),
+		vmath.vector3(self.width - right, preview_size, 0),
+		COLORS.background
+	))
 
--- Прозрачная область превью.
-add_node(self, create_box(
-vmath.vector3(center_x, center_y, 1.1),
-vmath.vector3(preview_w, preview_h, 0),
-vmath.vector4(0.02, 0.025, 0.03, 0.15)
-))
+	-- Большая панель с отверстием под превью.
+	add_node(self, create_box(
+		vmath.vector3(self.width * 0.5, self.height * 0.5, 0.9),
+		vmath.vector3(self.width * 0.92, self.height * 0.88, 0),
+		vmath.vector4(
+			COLORS.panel.x,
+			COLORS.panel.y,
+			COLORS.panel.z,
+			0.45
+		)
+	))
 
-add_node(self, create_text(
-vmath.vector3(center_x, self.height * 0.91, 1),
-"GARAGE",
-1.5 * self.scale,
-COLORS.accent
-))
+	-- Квадратная прозрачная область превью.
+	add_node(self, create_box(
+		vmath.vector3(preview_x, preview_y, 1),
+		vmath.vector3(preview_size, preview_size, 0),
+		vmath.vector4(0.02, 0.025, 0.03, 0.15)
+	))
 
-add_node(self, create_text(
-vmath.vector3(center_x, center_y + preview_h * 0.5 - 18 * self.scale, 2),
-"TANK PREVIEW",
-0.65 * self.scale,
-COLORS.muted
-))
+	-- Постоянная шапка IRONGRID.
+	add_node(self, create_box(
+		vmath.vector3(center_x, self.height - 24 * self.scale, 0.85),
+		vmath.vector3(self.width, 48 * self.scale, 0),
+		vmath.vector4(0.025, 0.04, 0.045, 1)
+	))
 
-create_button(
-self,
-"return",
-"BACK TO MENU",
-self.width * 0.15,
-self.height * 0.09,
-190 * self.scale,
-44 * self.scale
-)
+	add_node(self, create_text(
+		vmath.vector3(76 * self.scale, self.height - 24 * self.scale, 1),
+		"BATTLEFRONT",
+		0.9 * self.scale,
+		vmath.vector4(0.20, 0.82, 0.88, 1)
+	))
 
-create_button(
-self,
-"hulls",
-"HULLS",
-self.width * 0.37,
-self.height * 0.78,
-150 * self.scale,
-42 * self.scale
-)
+	local nav = {
+		{"ЗАДАЧИ", self.width * 0.23},
+		{"ДРУЗЬЯ", self.width * 0.33},
+		{"ГЛАВНАЯ", self.width * 0.43},
+		{"ГАРАЖ", self.width * 0.53},
+		{"МАГАЗИН", self.width * 0.63}
+	}
 
-create_button(
-self,
-"turrets",
-"TURRETS",
-self.width * 0.63,
-self.height * 0.78,
-150 * self.scale,
-42 * self.scale
-)
+	for _, item in ipairs(nav) do
+		local active = item[1] == "ГАРАЖ"
 
-create_button(
-self,
-"scroll_left",
-"<",
-self.width * 0.12,
-self.height * 0.37,
-45 * self.scale,
-55 * self.scale
-)
+		local box = add_node(self, create_box(
+			vmath.vector3(item[2], self.height - 24 * self.scale, 0.9),
+			vmath.vector3(92 * self.scale, 30 * self.scale, 0),
+			active and vmath.vector4(0.08, 0.27, 0.29, 1) or COLORS.card
+		))
 
-create_button(
-self,
-"scroll_right",
-">",
-self.width * 0.88,
-self.height * 0.37,
-45 * self.scale,
-55 * self.scale
-)
+		add_node(self, create_text(
+			vmath.vector3(item[2], self.height - 24 * self.scale, 1),
+			item[1],
+			0.48 * self.scale,
+			active and vmath.vector4(0.25, 0.85, 0.9, 1) or COLORS.text
+		))
 
-build_cards(self)
-update_preview(self)
+		self.buttons[#self.buttons + 1] = {
+			id = "nav_" .. item[1],
+			box = box
+		}
+	end
+
+	local gear = add_node(self, create_box(
+		vmath.vector3(self.width - 92 * self.scale, self.height - 24 * self.scale, 0.9),
+		vmath.vector3(34 * self.scale, 30 * self.scale, 0),
+		COLORS.card
+	))
+
+	add_node(self, create_text(
+		vmath.vector3(self.width - 92 * self.scale, self.height - 24 * self.scale, 1),
+		"S",
+		0.65 * self.scale,
+		COLORS.text
+	))
+
+	self.buttons[#self.buttons + 1] = {
+		id = "nav_settings",
+		box = gear
+	}
+
+	local exit_box = add_node(self, create_box(
+		vmath.vector3(self.width - 48 * self.scale, self.height - 24 * self.scale, 0.9),
+		vmath.vector3(34 * self.scale, 30 * self.scale, 0),
+		COLORS.card
+	))
+
+	add_node(self, create_text(
+		vmath.vector3(self.width - 48 * self.scale, self.height - 24 * self.scale, 1),
+		"<-",
+		0.65 * self.scale,
+		COLORS.text
+	))
+
+	self.buttons[#self.buttons + 1] = {
+		id = "return",
+		box = exit_box
+	}
+
+	-- Левая информационная карточка.
+	local selected_module
+	local selected_list = MODULES[self.section] or MODULES.hulls
+	local selected_id = self.section == "hulls" and self.hull_id or self.turret_id
+
+	for _, module in ipairs(selected_list) do
+		if module.id == selected_id then
+			selected_module = module
+			break
+		end
+	end
+
+	selected_module = selected_module or selected_list[1]
+
+	add_node(self, create_box(
+		vmath.vector3(info_x + 130, info_y, 0.45),
+		vmath.vector3(info_w, info_h, 0),
+		vmath.vector4(0.025, 0.045, 0.05, 0.92)
+	))
+
+	add_node(self, create_text(
+		vmath.vector3(info_x - info_w * 0, info_y + info_h * 0.31, 1),
+		selected_module.description,
+		0.92 * self.scale,
+		COLORS.text
+	))
+
+	add_node(self, create_text(
+		vmath.vector3(info_x - info_w * 0, info_y + info_h * 0.18, 1),
+		self.section == "hulls"
+		and "Быстрый и манёвренный, но слабо защищённый"
+		or "Установленное вооружение оператора",
+		0.42 * self.scale,
+		COLORS.muted
+	))
+
+	local stat_names = {"Броня", "Скорость", "Масса", "Здоровье"}
+
+	for i, stat_name in ipairs(stat_names) do
+		local sy = info_y + info_h * 0 - (i - 1) * 22 * self.scale
+
+		add_node(self, create_text(
+			vmath.vector3(info_x - info_w * 0.15, sy, 1),
+			stat_name,
+			0.43 * self.scale,
+			COLORS.muted
+		))
+
+		add_node(self, create_box(
+			vmath.vector3(info_x + info_w * 0.02, sy, 0.6),
+			vmath.vector3(info_w * 0.20, 3 * self.scale, 0),
+			COLORS.card
+		))
+	end
+
+	-- Заголовок квадратной области превью.
+	add_node(self, create_text(
+		vmath.vector3(
+			preview_x,
+			top - 18 * self.scale,
+			1
+		),
+		"TANK PREVIEW",
+		0.65 * self.scale,
+		COLORS.muted
+	))
+
+	create_button(
+		self,
+		"hulls",
+		"HULLS",
+		self.width * 0.37,
+		self.height * 0.17,
+		150 * self.scale,
+		42 * self.scale
+	)
+
+	create_button(
+		self,
+		"turrets",
+		"TURRETS",
+		self.width * 0.63,
+		self.height * 0.17,
+		150 * self.scale,
+		42 * self.scale
+	)
+
+	create_button(
+		self,
+		"scroll_left",
+		"<",
+		self.width * 0.12,
+		self.height * 0.32,
+		45 * self.scale,
+		55 * self.scale
+	)
+
+	create_button(
+		self,
+		"scroll_right",
+		">",
+		self.width * 0.88,
+		self.height * 0.32,
+		45 * self.scale,
+		55 * self.scale
+	)
+
+	build_cards(self)
+	update_preview(self)
 end
 
 
 local function activate_button(self, id)
 if id == "return" then
-msg.post(
-"bootstrap:/scene_manager#scene_manager",
-"return_to_menu"
-)
+msg.post("bootstrap:/scene_manager#scene_manager", "return_to_menu")
+return
+elseif id == "nav_ГЛАВНАЯ" then
+msg.post("bootstrap:/scene_manager#scene_manager", "return_to_menu")
+return
+elseif id == "nav_settings" then
+msg.post("bootstrap:/scene_manager#scene_manager", "open_settings")
+return
+elseif id == "nav_ЗАДАЧИ" or id == "nav_ДРУЗЬЯ" or id == "nav_МАГАЗИН" then
+print("[GARAGE] This section is a visual placeholder")
+return
+elseif id == "nav_ГАРАЖ" then
 return
 end
 

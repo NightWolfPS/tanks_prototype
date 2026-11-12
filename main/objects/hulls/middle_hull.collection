@@ -3,6 +3,22 @@ instances {
   id: "middle_hull"
   prototype: "/main/objects/hulls/middle_hull.go"
   children: "pivot"
+  position {
+    z: 0.2
+  }
+  component_properties {
+    id: "tank_controller"
+    properties {
+      id: "move_speed"
+      value: "90.0"
+      type: PROPERTY_TYPE_NUMBER
+    }
+    properties {
+      id: "turn_speed"
+      value: "55.0"
+      type: PROPERTY_TYPE_NUMBER
+    }
+  }
 }
 instances {
   id: "pivot"

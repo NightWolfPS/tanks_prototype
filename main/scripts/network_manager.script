@@ -1175,6 +1175,9 @@ reason = message.reason
 elseif message.type == "scoreboard" then
 local players = message.players
 post_match_timer(self, message)
+post_to_scene(self, "/tank_hud#gui", "server_map_name", {
+    name = type(message.map_name) == "string" and message.map_name or "Deathmatch"
+})
 
 if type(players) ~= "table" then
 log("Ignored malformed scoreboard")

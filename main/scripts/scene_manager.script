@@ -9,6 +9,7 @@ local MENU_PROXY = "#main_menu_proxy"
 local BATTLE_PROXY = "#battle_proxy"
 local GARAGE_PROXY = "#garage_proxy"
 local MATCH_SCORE_PROXY = "#match_score_proxy"
+local SETTINGS_PROXY = "#settings_proxy"
 
 local NETWORK_MANAGER_URL = msg.url("bootstrap:/network_manager#network_manager")
 
@@ -32,6 +33,10 @@ local SCENES = {
     match_score = {
         proxy = MATCH_SCORE_PROXY,
         socket = "match_score"
+    },
+    settings = {
+        proxy = SETTINGS_PROXY,
+        socket = "settings"
     }
 }
 
@@ -238,6 +243,9 @@ function on_message(self, message_id, message, sender)
         return
     elseif message_id == hash("open_battle") then
         load_scene(self, "battle")
+        return
+    elseif message_id == hash("open_settings") then
+        load_scene(self, "settings")
         return
     elseif message_id == hash("open_garage") then
         load_scene(self, "garage")

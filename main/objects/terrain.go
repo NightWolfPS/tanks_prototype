@@ -30,6 +30,7 @@ embedded_components {
   "restitution: 0.5\n"
   "group: \"default\"\n"
   "mask: \"tank\"\n"
+  "mask: \"turret\"\n"
   ""
 }
 embedded_components {
@@ -43,5 +44,6 @@ embedded_components {
   "group: \"default\"\n"
   "mask: \"tank\"\n"
   "mask: \"bot\"\n"
+  "mask: \"turret\"\n"
   ""
 }

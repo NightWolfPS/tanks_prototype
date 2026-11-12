@@ -1,0 +1,119 @@
+-- profile.gui_script
+-- IRONGRID persistent page header and lightweight placeholder page.
+-- Defold 1.13.1
+
+local SCALE = 36 / 72
+local C = {
+    bg = vmath.vector4(0.025, 0.04, 0.045, 1),
+    panel = vmath.vector4(0.045, 0.065, 0.07, 1),
+    button = vmath.vector4(0.07, 0.12, 0.13, 1),
+    active = vmath.vector4(0.08, 0.27, 0.29, 1),
+    accent = vmath.vector4(0.20, 0.82, 0.88, 1),
+    text = vmath.vector4(0.92, 0.95, 0.94, 1),
+    muted = vmath.vector4(0.43, 0.58, 0.59, 1)
+}
+
+local function box(self, x, y, w, h, color, z)
+    local n = gui.new_box_node(vmath.vector3(x, y, z or 0.8), vmath.vector3(w, h, 0))
+    gui.set_color(n, color)
+    self.nodes[#self.nodes + 1] = n
+    return n
+end
+
+local function label(self, x, y, value, scale, color)
+    local n = gui.new_text_node(vmath.vector3(x, y, 1), value)
+    gui.set_scale(n, vmath.vector3(scale * SCALE, scale * SCALE, 1))
+    gui.set_color(n, color or C.text)
+    self.nodes[#self.nodes + 1] = n
+    return n
+end
+
+local function build(self)
+    for _, n in ipairs(self.nodes or {}) do gui.delete_node(n) end
+    self.nodes = {}
+    self.buttons = {}
+    local w, h = gui.get_width(), gui.get_height()
+    self.width, self.height = w, h
+    local s = math.min(1, w / 1280, h / 720)
+    self.scale = s
+
+    box(self, w * 0.5, h * 0.5, w, h, C.bg, -0.8)
+    box(self, w * 0.5, h - 24 * s, w, 48 * s, C.panel, 0.8)
+    label(self, 76 * s, h - 24 * s, "BATTLEFRONT", 0.9 * s, C.accent)
+
+    local nav = {
+        {"ЗАДАЧИ", w * 0.23, "tasks"},
+        {"ДРУЗЬЯ", w * 0.33, "friends"},
+        {"В БОЙ", w * 0.43, "battle"},
+        {"ГАРАЖ", w * 0.53, "garage"},
+        {"МАГАЗИН", w * 0.63, "shop"}
+    }
+    for _, item in ipairs(nav) do
+        local b = box(self, item[2], h - 24 * s, 92 * s, 30 * s,
+            item[3] == "active" and C.active or C.button, 0.9)
+        label(self, item[2], h - 24 * s, item[1], 0.48 * s)
+        self.buttons[#self.buttons + 1] = { id = item[3], node = b }
+    end
+
+    local gear = box(self, w - 92 * s, h - 24 * s, 34 * s, 30 * s, C.active, 0.9)
+    label(self, w - 92 * s, h - 24 * s, "S", 0.65 * s)
+    self.buttons[#self.buttons + 1] = { id = "settings", node = gear }
+    local exit = box(self, w - 48 * s, h - 24 * s, 34 * s, 30 * s, C.button, 0.9)
+    label(self, w - 48 * s, h - 24 * s, "X", 0.65 * s)
+    self.buttons[#self.buttons + 1] = { id = "exit", node = exit }
+
+    box(self, w * 0.5, h * 0.48, w * 0.88, h * 0.72, C.panel, 0.2)
+    label(self, w * 0.09, h * 0.78, "ПРОФИЛЬ", 1.1 * s, C.accent)
+        local ok, data = pcall(function() return sys.load("player.save") end)
+    local nickname = ok and type(data) == "table" and data.nickname or "ОПЕРАТОР"
+    box(self, w * 0.5, h * 0.62, w * 0.78, 120 * s, C.bg, 0.4)
+    label(self, w * 0.20, h * 0.65, tostring(nickname), 1.0 * s, C.text)
+    label(self, w * 0.20, h * 0.58, "Уровень и общая статистика появятся позже", 0.55 * s, C.muted)
+end
+
+local function activate(self, id)
+    if id == "battle" then
+        msg.post("bootstrap:/scene_manager#scene_manager", "return_to_menu")
+    elseif id == "garage" then
+        msg.post("bootstrap:/scene_manager#scene_manager", "open_garage")
+    elseif id == "settings" then
+        msg.post("bootstrap:/scene_manager#scene_manager", "open_settings")
+    elseif id == "exit" then
+        msg.post("bootstrap:/scene_manager#scene_manager", "return_to_menu")
+    else
+        print("[IRONGRID] Section is a placeholder: " .. tostring(id))
+    end
+end
+
+function init(self)
+    self.nodes = {}
+    self.buttons = {}
+    self.pressed = nil
+    build(self)
+    msg.post(".", "acquire_input_focus")
+end
+
+function final(self)
+    for _, n in ipairs(self.nodes or {}) do gui.delete_node(n) end
+end
+
+function update(self, dt)
+    if gui.get_width() ~= self.width or gui.get_height() ~= self.height then build(self) end
+end
+
+function on_input(self, action_id, action)
+    if action_id ~= hash("touch") then return false end
+    if action.pressed then
+        self.pressed = nil
+        for _, b in ipairs(self.buttons) do
+            if gui.pick_node(b.node, action.x, action.y) then self.pressed = b.id; return true end
+        end
+    elseif action.released and self.pressed then
+        local id = self.pressed
+        self.pressed = nil
+        for _, b in ipairs(self.buttons) do
+            if b.id == id and gui.pick_node(b.node, action.x, action.y) then activate(self, id); return true end
+        end
+    end
+    return true
+end

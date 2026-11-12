@@ -1,0 +1,107 @@
+name: "snowy_castle"
+instances {
+  id: "snowy_castle"
+  prototype: "/main/objects/snowy_castle.go"
+}
+instances {
+  id: "tank_hud"
+  prototype: "/main/objects/tank_hud.go"
+}
+instances {
+  id: "tank_spawner"
+  prototype: "/main/objects/tank_spawner.go"
+  position {
+    x: 270.06912
+    y: 299.95584
+  }
+  component_properties {
+    id: "tank_spawner"
+    properties {
+      id: "spawn_delay"
+      value: "1.5"
+      type: PROPERTY_TYPE_NUMBER
+    }
+  }
+}
+instances {
+  id: "camera"
+  prototype: "/main/objects/camera.go"
+  position {
+    x: 1017.0
+    y: 1271.0
+    z: 2.0
+  }
+}
+scale_along_z: 0
+embedded_instances {
+  id: "spawn_point_5"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 1679.0
+    y: 1774.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_1"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 280.0
+    y: 544.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_6"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 263.0
+    y: 1685.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_2"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 1483.0
+    y: 229.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_3"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 1173.0
+    y: 2310.0
+  }
+}
+embedded_instances {
+  id: "spawn_point_4"
+  data: "components {\n"
+  "  id: \"spawn_point\"\n"
+  "  component: \"/main/scripts/spawn_point.script\"\n"
+  "}\n"
+  ""
+  position {
+    x: 1728.0
+    y: 968.0
+  }
+}

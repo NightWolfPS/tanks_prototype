@@ -2,6 +2,7 @@
 -- Match results screen. All interface nodes are created dynamically.
 -- Defold 1.13.1
 
+local TEXT_SCALE = 36 / 72 -- Дополнительное уменьшение текста ещё на треть.
 local COLOR_TITLE = vmath.vector4(1.0, 0.84, 0.42, 1.0)
 local COLOR_TEXT = vmath.vector4(0.92, 0.94, 0.96, 1.0)
 local COLOR_MUTED = vmath.vector4(0.62, 0.68, 0.72, 1.0)
@@ -12,7 +13,7 @@ local function add_text(self, x, y, text, color, scale)
     local node = gui.new_text_node(vmath.vector3(x, y, 1), text)
     gui.set_font(node, "ru")
     gui.set_color(node, color)
-    gui.set_scale(node, vmath.vector3(scale or 0.8, scale or 0.8, 1))
+    gui.set_scale(node, vmath.vector3((scale or 0.8) * TEXT_SCALE, (scale or 0.8) * TEXT_SCALE, 1))
     gui.set_pivot(node, gui.PIVOT_CENTER)
     self.nodes[#self.nodes + 1] = node
     return node
@@ -28,6 +29,16 @@ end
 local function render_results(self, results)
     clear_nodes(self)
     local width, height = gui.get_width(), gui.get_height()
+    local header_bg = gui.new_box_node(vmath.vector3(width * 0.5, height - 24, 0.8), vmath.vector3(width, 48, 0))
+    gui.set_color(header_bg, vmath.vector4(0.025, 0.04, 0.045, 1))
+    self.nodes[#self.nodes + 1] = header_bg
+    add_text(self, 76, height - 24, "BATTLEFRONT", COLOR_TITLE, 0.9)
+    local nav = {{"ЗАДАЧИ", 0.23}, {"ДРУЗЬЯ", 0.33}, {"В БОЙ", 0.43}, {"ГАРАЖ", 0.53}, {"МАГАЗИН", 0.63}}
+    for _, item in ipairs(nav) do
+        add_text(self, width * item[2], height - 24, item[1], COLOR_TEXT, 0.48)
+    end
+    add_text(self, width - 92, height - 24, "S", COLOR_TEXT, 0.65)
+    add_text(self, width - 48, height - 24, "X", COLOR_TEXT, 0.65)
     add_text(self, width * 0.5, height - 70, "ИТОГИ МАТЧА", COLOR_TITLE, 1.35)
     add_text(self, width * 0.5, height - 125,
         "МЕСТО       ИГРОК                 ОЧКИ     УБИЙСТВА   СМЕРТИ   УРОН",
@@ -96,6 +107,19 @@ end
 
 function on_input(self, action_id, action)
     if action_id == hash("touch") and action.pressed then
+        local width, height = gui.get_width(), gui.get_height()
+        if action.y >= height - 48 then
+            if action.x >= width * 0.47 and action.x <= width * 0.59 then
+                msg.post("bootstrap:/scene_manager#scene_manager", "open_garage")
+                return true
+            elseif action.x >= width - 120 and action.x <= width - 65 then
+                msg.post("bootstrap:/scene_manager#scene_manager", "open_settings")
+                return true
+            elseif action.x >= width * 0.39 and action.x <= width * 0.47 then
+                msg.post("bootstrap:/scene_manager#scene_manager", "return_to_menu")
+                return true
+            end
+        end
         local half_w = self.button_width * 0.5
         local half_h = self.button_height * 0.5
         if action.x >= self.button_x - half_w

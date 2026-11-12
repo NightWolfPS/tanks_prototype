@@ -2,6 +2,7 @@
 -- Independent nickname object following its tank.
 -- Defold 1.13.1
 
+local TEXT_SCALE = (32 / 72) * (2 / 3) -- Дополнительное уменьшение текста ещё на треть.
 local NAME_OFFSET = vmath.vector3(0, 80, 1)
 
 function init(self)
@@ -10,6 +11,7 @@ function init(self)
     self.anchor_id = nil
     label.set_text("#label", "")
     go.set_rotation(vmath.quat())
+    go.set_scale(vmath.vector3(TEXT_SCALE, TEXT_SCALE, TEXT_SCALE))
 end
 
 local function refresh_label(self)

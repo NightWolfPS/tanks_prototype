@@ -27,7 +27,7 @@ local TURRETS = {
 }
 
 -- Мировые координаты превью.
-local PREVIEW_POSITION = vmath.vector3(640, 425, 1)
+local PREVIEW_POSITION = vmath.vector3(1020, 480, 1)
 
 
 local function log(message)

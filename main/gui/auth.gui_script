@@ -2,6 +2,7 @@
 -- First-launch profile creation.
 -- Defold 1.13.1
 
+local TEXT_SCALE = 36 / 72 -- Дополнительное уменьшение текста ещё на треть.
 local PLAYER_SAVE_PATH = "player.save"
 local MIN_NICKNAME_LENGTH = 3
 local MAX_NICKNAME_LENGTH = 16
@@ -25,7 +26,7 @@ end
 
 local function create_text(position, value, scale, color)
     local node = gui.new_text_node(position, value)
-    gui.set_scale(node, vmath.vector3(scale, scale, 1))
+    gui.set_scale(node, vmath.vector3(scale * TEXT_SCALE, scale * TEXT_SCALE, 1))
     gui.set_color(node, color)
     return node
 end
@@ -97,6 +98,15 @@ local function build_screen(self)
         vmath.vector3(center_x, center_y, 0),
         vmath.vector3(panel_width, panel_height, 0),
         COLORS.panel
+    ))
+    add_node(self, create_box(
+        vmath.vector3(center_x, self.height - 24 * self.scale, 0.8),
+        vmath.vector3(self.width, 48 * self.scale, 0),
+        vmath.vector4(0.025, 0.04, 0.045, 1)
+    ))
+    add_node(self, create_text(
+        vmath.vector3(76 * self.scale, self.height - 24 * self.scale, 1),
+        "BATTLEFRONT", 0.9 * self.scale, vmath.vector4(0.20, 0.82, 0.88, 1)
     ))
 
     add_node(self, create_text(

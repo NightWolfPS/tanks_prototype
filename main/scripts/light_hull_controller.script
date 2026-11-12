@@ -175,6 +175,7 @@ function init(self)
     self.TANK_SPAWNER_URL = scene_url(self, "/tank_spawner", "tank_spawner")
     self.BOT_SPAWNER_URL = scene_url(self, "/bot_spawner", "bot_spawner")
     self.HUD_URL = scene_url(self, "/tank_hud", "gui")
+self.CAMERA_URL = scene_url(self, "/camera", "camera_script")
 self.hp = self.max_hp
 self.dead = false
 self.slow_timer = 0
@@ -505,6 +506,67 @@ and type(message.hp) == "number" then
 elseif damage > 0 then
     -- Local damage path (bots / offline targets).
     self.hp = math.max(0, self.hp - damage)
+end
+
+if damage > 0 then
+-- Hit feedback is local-only: direction indicator and camera impulse.
+local hit_x = tonumber(message.hit_x)
+local hit_y = tonumber(message.hit_y)
+if hit_x and hit_y then
+    local tank_position = go.get_world_position()
+    local dx = hit_x - tank_position.x
+    local dy = hit_y - tank_position.y
+    if math.abs(dx) + math.abs(dy) > 0.001 then
+        msg.post(self.HUD_URL, "damage_direction", {
+            angle = math.atan2(dy, dx)
+        })
+        print("[PLAYER] Damage direction sent to HUD")
+    end
+end
+msg.post(self.CAMERA_URL, "shake", {
+    strength = clamp(1.8 + damage / 35, 2.0, 4.0),
+    duration = 0.22
+})
+
+print("[PLAYER] Took " .. damage .. " damage")
+print("[PLAYER] HP: " .. self.hp .. "/" .. self.max_hp)
+
+update_health_hud(self)
+end
+
+-- Hit feedback: triggered by every projectile hit,
+-- including ricochets and zero-damage hits.
+-- Burn ticks are not new projectile hits.
+local is_projectile_hit =
+message_id == hash("take_damage")
+or (
+message_id == hash("network_apply_damage")
+and message.status_tick ~= true
+)
+
+if is_projectile_hit then
+local hit_x = tonumber(message.hit_x)
+local hit_y = tonumber(message.hit_y)
+
+if hit_x and hit_y then
+    local tank_position = go.get_world_position()
+    local dx = hit_x - tank_position.x
+    local dy = hit_y - tank_position.y
+
+    if math.abs(dx) + math.abs(dy) > 0.001 then
+        msg.post(self.HUD_URL, "damage_direction", {
+            angle = math.atan2(dy, dx)
+        })
+    end
+end
+
+-- Fixed camera shake, independent of damage.
+msg.post(self.CAMERA_URL, "shake", {
+    strength = 2.5,
+    duration = 0.22
+})
+
+print("[PLAYER] Projectile hit feedback triggered")
 end
 
 if damage > 0 then

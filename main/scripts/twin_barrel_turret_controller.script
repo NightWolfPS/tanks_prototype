@@ -55,24 +55,31 @@ local function get_barrel_position(self, rotation)
 end
 
 local function update_laser(self)
-	if not self.laser_id then
-		return
-	end
+    if not self.laser_id then
+        return
+    end
 
-	local rotation = go.get_world_rotation()
-	local turret_position = go.get_world_position()
-	local direction = vmath.rotate(
-	rotation,
-	vmath.vector3(0, 1, 0)
+    local rotation = go.get_world_rotation()
+    local turret_position = go.get_world_position()
+
+    local direction = vmath.rotate(
+    rotation,
+    vmath.vector3(0, 1, 0)
 )
 
-local start_position = turret_position
-+ direction * self.muzzle_distance
+local start_position =
+turret_position - direction
 
-local end_position = start_position + direction * LASER_RANGE
-
+local end_position =
+start_position + direction * LASER_RANGE
+print("[LASER] EXPECTED RANGE:", LASER_RANGE)
+print("[LASER] RAY LENGTH:", vmath.length(end_position - start_position))
 local hit = get_first_hit(
-physics.raycast(start_position, end_position, LASER_GROUPS)
+physics.raycast(
+start_position,
+end_position,
+LASER_GROUPS
+)
 )
 
 if type(hit) == "table" and hit.position then
@@ -80,15 +87,19 @@ end_position = hit.position
 end
 
 local delta = end_position - start_position
+print("Start: " .. start_position)
+print("End: " .. end_position)
+print("Delta: " .. delta)
 local length = math.max(1, vmath.length(delta))
 local center = start_position + direction * (length * 0.5)
+
 center.z = 0.3
 
 pcall(go.set_position, center, self.laser_id)
 pcall(go.set_rotation, rotation, self.laser_id)
 pcall(
 go.set_scale,
-vmath.vector3(2, length, 1),
+vmath.vector3(3, length, 1),
 self.laser_id
 )
 end

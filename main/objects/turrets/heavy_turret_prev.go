@@ -10,6 +10,7 @@ embedded_components {
   ""
   position {
     y: 8.0
+    z: 0.5
   }
   scale {
     x: 0.2

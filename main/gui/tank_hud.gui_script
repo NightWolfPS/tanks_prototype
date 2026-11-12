@@ -3,6 +3,7 @@
 -- Kill Feed, боевая сводка, чат и боевое меню.
 -- Defold 1.13.1
 
+local TEXT_SCALE = 36 / 72 -- Немного крупнее прежнего масштаба.
 local BAR_WIDTH = 280
 local BAR_HEIGHT = 5
 local BOTTOM_MARGIN = 42
@@ -41,7 +42,6 @@ local COLOR_SCORE_HEADER = vmath.vector4(0.92, 0.76, 0.36, 1.0)
 local COLOR_SCORE_TEXT = vmath.vector4(0.88, 0.91, 0.93, 1.0)
 local COLOR_PLAYER = vmath.vector4(0.35, 0.90, 0.52, 1.0)
 
-local COLOR_KILLFEED_BG = vmath.vector4(0, 0, 0, 0.9)
 local COLOR_KILLER = vmath.vector4(0.40, 0.93, 0.58, 1.0)
 local COLOR_KILLFEED_ARROW = vmath.vector4(0.95, 0.78, 0.38, 1.0)
 local COLOR_VICTIM = vmath.vector4(1.0, 0.42, 0.36, 1.0)
@@ -125,7 +125,7 @@ local function create_score_text(position, text, color, scale)
     local node = gui.new_text_node(position, text)
     gui.set_font(node, SCORE_FONT)
     gui.set_color(node, color)
-    gui.set_scale(node, vmath.vector3(scale, scale, 1))
+    gui.set_scale(node, vmath.vector3(scale * TEXT_SCALE, scale * TEXT_SCALE, 1))
     return node
 end
 
@@ -133,7 +133,7 @@ local function create_killfeed_text(position, text, color, scale)
     local node = gui.new_text_node(position, text)
     gui.set_font(node, KILLFEED_FONT)
     gui.set_color(node, color)
-    gui.set_scale(node, vmath.vector3(scale, scale, 1))
+    gui.set_scale(node, vmath.vector3(scale * TEXT_SCALE, scale * TEXT_SCALE, 1))
     gui.set_enabled(node, false)
     return node
 end
@@ -142,7 +142,7 @@ local function create_combat_feed_text(position, text, color)
     local node = gui.new_text_node(position, text)
     gui.set_font(node, COMBAT_FEED_FONT)
     gui.set_color(node, color)
-    gui.set_scale(node, vmath.vector3(0.62, 0.62, 1))
+    gui.set_scale(node, vmath.vector3(0.62 * TEXT_SCALE, 0.62 * TEXT_SCALE, 1))
     gui.set_enabled(node, false)
     return node
 end
@@ -151,7 +151,7 @@ local function create_chat_text(position, text, color)
     local node = gui.new_text_node(position, text)
     gui.set_font(node, CHAT_FONT)
     gui.set_color(node, color)
-    gui.set_scale(node, vmath.vector3(0.62, 0.62, 1))
+    gui.set_scale(node, vmath.vector3(0.62 * TEXT_SCALE, 0.62 * TEXT_SCALE, 1))
     gui.set_pivot(node, gui.PIVOT_W)
     gui.set_enabled(node, false)
     return node
@@ -334,14 +334,14 @@ local left_x = center_x - BAR_WIDTH * 0.5
 local right_x = center_x + BAR_WIDTH * 0.5
 
 gui.set_position(bar.background, vmath.vector3(center_x, center_y, 0))
-gui.set_position(bar.top, vmath.vector3(center_x, center_y + BAR_HEIGHT * 0.5, 2))
-gui.set_position(bar.bottom, vmath.vector3(center_x, center_y - BAR_HEIGHT * 0.5, 2))
-gui.set_position(bar.left, vmath.vector3(left_x, center_y, 2))
-gui.set_position(bar.right, vmath.vector3(right_x, center_y, 2))
+gui.set_position(bar.top, vmath.vector3(center_x, center_y + BAR_HEIGHT * 0.5, 1))
+gui.set_position(bar.bottom, vmath.vector3(center_x, center_y - BAR_HEIGHT * 0.5, 1))
+gui.set_position(bar.left, vmath.vector3(left_x, center_y, 1))
+gui.set_position(bar.right, vmath.vector3(right_x, center_y, 1))
 
 for i, tick in ipairs(bar.ticks) do
 local x = left_x + BAR_WIDTH * i / 10
-gui.set_position(tick, vmath.vector3(x, center_y, 2))
+gui.set_position(tick, vmath.vector3(x, center_y, 1))
 end
 
 bar.center_x = center_x
@@ -375,6 +375,59 @@ end
 -- Серверная таблица игроков
 -- =========================================================
 
+local function create_damage_direction_indicator(self)
+    local center = vmath.vector3(gui.get_width() * 0.5, gui.get_height() * 0.5, 1)
+    self.damage_direction_nodes = {
+        gui.new_box_node(center, vmath.vector3(34, 7, 0)),
+        gui.new_box_node(center, vmath.vector3(13, 6, 0)),
+        gui.new_box_node(center, vmath.vector3(13, 6, 0))
+    }
+
+    for _, node in ipairs(self.damage_direction_nodes) do
+        gui.set_color(node, vmath.vector4(1, 0.12, 0.06, 0))
+        gui.set_enabled(node, false)
+    end
+
+    self.damage_direction_time = 0
+    self.damage_direction_duration = 0.9
+    self.damage_direction_angle = 0
+end
+
+local function update_damage_direction_indicator(self, dt)
+    if not self.damage_direction_nodes or self.damage_direction_time <= 0 then
+        return
+    end
+
+    self.damage_direction_time = math.max(0, self.damage_direction_time - dt)
+    local alpha = math.min(1, self.damage_direction_time / 0.55)
+    local center_x = gui.get_width() * 0.5
+    local center_y = gui.get_height() * 0.5
+    local radius = math.min(gui.get_width(), gui.get_height()) * 0.30
+    local angle = self.damage_direction_angle
+    local dx, dy = math.cos(angle), math.sin(angle)
+    local x, y = center_x + dx * radius, center_y + dy * radius
+    local rotation = vmath.quat_rotation_z(angle)
+
+    local main, wing_a, wing_b = self.damage_direction_nodes[1], self.damage_direction_nodes[2], self.damage_direction_nodes[3]
+    gui.set_position(main, vmath.vector3(x, y, 1))
+    gui.set_rotation(main, rotation)
+    gui.set_position(wing_a, vmath.vector3(x - dx * 11 - math.cos(angle + 0.65) * 5, y - dy * 11 - math.sin(angle + 0.65) * 5, 1))
+    gui.set_rotation(wing_a, vmath.quat_rotation_z(angle + 0.65))
+    gui.set_position(wing_b, vmath.vector3(x - dx * 11 - math.cos(angle - 0.65) * 5, y - dy * 11 - math.sin(angle - 0.65) * 5, 1))
+    gui.set_rotation(wing_b, vmath.quat_rotation_z(angle - 0.65))
+
+    for _, node in ipairs(self.damage_direction_nodes) do
+        gui.set_color(node, vmath.vector4(1, 0.12, 0.06, alpha))
+        if not gui.is_enabled(node) then gui.set_enabled(node, true) end
+    end
+
+    if self.damage_direction_time <= 0 then
+        for _, node in ipairs(self.damage_direction_nodes) do
+            gui.set_enabled(node, false)
+        end
+    end
+end
+
 local function create_scoreboard(self)
 self.scoreboard_bg = make_box(
 vmath.vector3(0, 0, 0),
@@ -382,13 +435,30 @@ vmath.vector3(SCOREBOARD_WIDTH, 80, 0),
 COLOR_SCORE_BG
 )
 
-self.score_title = create_score_text(vmath.vector3(0, 0, 1), "DEATHMATCH", COLOR_SCORE_HEADER, 0.72)
-self.score_header_name = create_score_text(vmath.vector3(0, 0, 1), "PLAYER", COLOR_SCORE_HEADER, 0.58)
-self.score_header_points = create_score_text(vmath.vector3(0, 0, 1), "POINTS", COLOR_SCORE_HEADER, 0.58)
-self.score_header_damage = create_score_text(vmath.vector3(0, 0, 1), "DMG", COLOR_SCORE_HEADER, 0.58)
-self.score_header_ping = create_score_text(vmath.vector3(0, 0, 1), "PING", COLOR_SCORE_HEADER, 0.58)
-self.score_header_k = create_score_text(vmath.vector3(0, 0, 1), "K", COLOR_SCORE_HEADER, 0.58)
-self.score_header_d = create_score_text(vmath.vector3(0, 0, 1), "D", COLOR_SCORE_HEADER, 0.58)
+self.scoreboard_border = {
+    top = make_box(vmath.vector3(0, 0, 0.45), vmath.vector3(SCOREBOARD_WIDTH, 2, 0), COLOR_SCORE_HEADER),
+    bottom = make_box(vmath.vector3(0, 0, 0.45), vmath.vector3(SCOREBOARD_WIDTH, 2, 0), COLOR_SCORE_HEADER),
+    left = make_box(vmath.vector3(0, 0, 0.45), vmath.vector3(2, 80, 0), COLOR_SCORE_HEADER),
+    right = make_box(vmath.vector3(0, 0, 0.45), vmath.vector3(2, 80, 0), COLOR_SCORE_HEADER)
+}
+self.score_row_highlights = {}
+for row = 0, MAX_PLAYERS - 1 do
+    self.score_row_highlights[row] = make_box(
+        vmath.vector3(0, 0, 0.35),
+        vmath.vector3(SCOREBOARD_WIDTH - 8, SCOREBOARD_ROW_HEIGHT - 2, 0),
+        vmath.vector4(0.05, 0.32, 0.22, 0.9)
+    )
+    gui.set_enabled(self.score_row_highlights[row], false)
+end
+
+self.score_title = create_score_text(vmath.vector3(0, 0, 1), "МАТЧ", COLOR_SCORE_HEADER, 0.82)
+self.map_name = "DEATHMATCH"
+self.score_header_name = create_score_text(vmath.vector3(0, 0, 1), "НИКНЕЙМ", COLOR_SCORE_HEADER, 0.48)
+self.score_header_points = create_score_text(vmath.vector3(0, 0, 1), "ОЧКИ", COLOR_SCORE_HEADER, 0.48)
+self.score_header_damage = create_score_text(vmath.vector3(0, 0, 1), "УРОН", COLOR_SCORE_HEADER, 0.48)
+self.score_header_ping = create_score_text(vmath.vector3(0, 0, 1), "ПИНГ", COLOR_SCORE_HEADER, 0.48)
+self.score_header_k = create_score_text(vmath.vector3(0, 0, 1), "УБИЙСТВА", COLOR_SCORE_HEADER, 0.42)
+self.score_header_d = create_score_text(vmath.vector3(0, 0, 1), "СМЕРТИ", COLOR_SCORE_HEADER, 0.45)
 
 self.score_rows = {}
 
@@ -468,13 +538,24 @@ gui.set_position(self.scoreboard_bg, vmath.vector3(center_x, center_y, 0))
 gui.set_position(self.score_title, vmath.vector3(center_x, top_y - 17, 1))
 
 gui.set_position(self.score_header_name, vmath.vector3(left_x + 48, top_y - 42, 1))
-gui.set_position(self.score_header_points, vmath.vector3(left_x + 240, top_y - 42, 1))
-gui.set_position(self.score_header_damage, vmath.vector3(left_x + 310, top_y - 42, 1))
-gui.set_position(self.score_header_ping, vmath.vector3(left_x + 375, top_y - 42, 1))
-gui.set_position(self.score_header_k, vmath.vector3(left_x + 435, top_y - 42, 1))
-gui.set_position(self.score_header_d, vmath.vector3(left_x + 470, top_y - 42, 1))
+gui.set_position(self.score_header_k, vmath.vector3(left_x + 240, top_y - 42, 1))
+gui.set_position(self.score_header_d, vmath.vector3(left_x + 310, top_y - 42, 1))
+gui.set_position(self.score_header_damage, vmath.vector3(left_x + 375, top_y - 42, 1))
+gui.set_position(self.score_header_points, vmath.vector3(left_x + 435, top_y - 42, 1))
+gui.set_position(self.score_header_ping, vmath.vector3(left_x + 470, top_y - 42, 1))
 
 gui.set_enabled(self.scoreboard_bg, visible)
+local border = self.scoreboard_border
+local border_thickness = 2
+gui.set_size(border.top, vmath.vector3(SCOREBOARD_WIDTH, border_thickness, 0))
+gui.set_size(border.bottom, vmath.vector3(SCOREBOARD_WIDTH, border_thickness, 0))
+gui.set_size(border.left, vmath.vector3(border_thickness, panel_height, 0))
+gui.set_size(border.right, vmath.vector3(border_thickness, panel_height, 0))
+gui.set_position(border.top, vmath.vector3(center_x, top_y, 0.45))
+gui.set_position(border.bottom, vmath.vector3(center_x, center_y - panel_height * 0.5, 0.45))
+gui.set_position(border.left, vmath.vector3(left_x, center_y, 0.45))
+gui.set_position(border.right, vmath.vector3(left_x + SCOREBOARD_WIDTH, center_y, 0.45))
+for _, node in pairs(border) do gui.set_enabled(node, visible) end
 gui.set_enabled(self.score_title, visible)
 gui.set_enabled(self.score_header_name, visible)
 gui.set_enabled(self.score_header_points, visible)
@@ -487,6 +568,12 @@ for row = 0, MAX_PLAYERS - 1 do
 local nodes = self.score_rows[row]
 local entry = entries[row + 1]
 local row_visible = visible and entry ~= nil
+local highlight = self.score_row_highlights[row]
+gui.set_enabled(highlight, row_visible and entry.is_local == true)
+if row_visible then
+    local highlight_y = top_y - 63 - row * SCOREBOARD_ROW_HEIGHT
+    gui.set_position(highlight, vmath.vector3(center_x, highlight_y, 0.35))
+end
 
 gui.set_enabled(nodes.name, row_visible)
 gui.set_enabled(nodes.points, row_visible)
@@ -499,11 +586,11 @@ if row_visible then
 local y = top_y - 63 - row * SCOREBOARD_ROW_HEIGHT
 
 gui.set_position(nodes.name, vmath.vector3(left_x + 48, y, 1))
-gui.set_position(nodes.points, vmath.vector3(left_x + 240, y, 1))
-gui.set_position(nodes.damage, vmath.vector3(left_x + 310, y, 1))
-gui.set_position(nodes.ping, vmath.vector3(left_x + 375, y, 1))
-gui.set_position(nodes.kills, vmath.vector3(left_x + 435, y, 1))
-gui.set_position(nodes.deaths, vmath.vector3(left_x + 470, y, 1))
+gui.set_position(nodes.kills, vmath.vector3(left_x + 240, y, 1))
+gui.set_position(nodes.deaths, vmath.vector3(left_x + 310, y, 1))
+gui.set_position(nodes.damage, vmath.vector3(left_x + 375, y, 1))
+gui.set_position(nodes.points, vmath.vector3(left_x + 435, y, 1))
+gui.set_position(nodes.ping, vmath.vector3(left_x + 470, y, 1))
 
 gui.set_text(nodes.name, entry.player_id)
 gui.set_text(nodes.points, tostring(entry.points))
@@ -512,7 +599,7 @@ gui.set_text(nodes.ping, (tostring(entry.ping) .. "ms"))
 gui.set_text(nodes.kills, tostring(entry.kills))
 gui.set_text(nodes.deaths, tostring(entry.deaths))
 
-local row_color = entry.is_local and COLOR_PLAYER or COLOR_SCORE_TEXT
+local row_color = entry.is_local and vmath.vector4(0.55, 1.0, 0.72, 1) or COLOR_SCORE_TEXT
 
 gui.set_color(nodes.name, row_color)
 gui.set_color(nodes.points, row_color)
@@ -547,9 +634,18 @@ if row == nil or row < 0 or row >= MAX_PLAYERS then
 return
 end
 
-local player_id = tostring(message.name or message.player_id or "UNKNOWN")
-
+local player_id = tostring(message.name or message.nickname or message.player_id or "UNKNOWN")
+if message.is_local == true and self.local_nickname and self.local_nickname ~= "" then
+    player_id = self.local_nickname
+end
 player_id = truncate_utf8(player_id, 18)
+
+if type(message.player_id) == "string" and message.player_id ~= "" then
+    self.nickname_by_id[message.player_id] = player_id
+end
+if message.is_local == true and type(self.local_nickname) == "string" then
+    self.nickname_by_id[message.player_id or ""] = self.local_nickname
+end
 
 self.server_scoreboard_rows[row] = {
 player_id = player_id,
@@ -580,16 +676,6 @@ end
 -- =========================================================
 
 local function create_killfeed(self)
-self.killfeed_bg = make_box(
-vmath.vector3(0, 0, 1),
-vmath.vector3(KILLFEED_WIDTH, 30, 0),
-COLOR_KILLFEED_BG
-)
-
-self.killfeed_title = create_killfeed_text(
-vmath.vector3(0, 0, 1), " ", COLOR_SCORE_HEADER, 0.58
-)
-
 self.killfeed_rows = {}
 self.killfeed_entries = {}
 
@@ -601,16 +687,12 @@ victim = create_killfeed_text(vmath.vector3(0, 0, 1), "", COLOR_VICTIM, 0.52)
 }
 end
 
-gui.set_enabled(self.killfeed_bg, false)
-gui.set_enabled(self.killfeed_title, false)
 end
 
 local function layout_killfeed(self)
 local count = math.min(#self.killfeed_entries, KILLFEED_MAX_ROWS)
 local visible = count > 0
 
-gui.set_enabled(self.killfeed_bg, visible)
-gui.set_enabled(self.killfeed_title, visible)
 
 for row = 1, KILLFEED_MAX_ROWS do
 local nodes = self.killfeed_rows[row]
@@ -644,18 +726,9 @@ local screen_height = gui.get_height()
 local right_x = screen_width - KILLFEED_MARGIN
 local top_y = screen_height - KILLFEED_MARGIN
 local left_x = right_x - KILLFEED_WIDTH
-local panel_height = 28 + count * KILLFEED_ROW_HEIGHT
-
-local center_x = (left_x + right_x) * 0.5
-local center_y = top_y - panel_height * 0.5
-
-gui.set_size(self.killfeed_bg, vmath.vector3(KILLFEED_WIDTH, panel_height, 0))
-gui.set_position(self.killfeed_bg, vmath.vector3(center_x, center_y, 1))
-gui.set_position(self.killfeed_title, vmath.vector3(left_x + 46, top_y - 13, 1))
-
 for row = 1, count do
 local nodes = self.killfeed_rows[row]
-local y = top_y - 31 - (row - 1) * KILLFEED_ROW_HEIGHT
+local y = top_y - 12 - (row - 1) * KILLFEED_ROW_HEIGHT
 
 gui.set_position(nodes.killer, vmath.vector3(left_x + 62, y, 1))
 gui.set_position(nodes.arrow, vmath.vector3(left_x + 160, y, 1))
@@ -669,9 +742,11 @@ print("[HUD] Ignored killfeed event without victim ID")
 return
 end
 
+local killer_name = self.nickname_by_id and self.nickname_by_id[killer_id] or killer_id
+local victim_name = self.nickname_by_id and self.nickname_by_id[victim_id] or victim_id
 local entry = {
-killer_id = short_id(killer_id, "WORLD"),
-victim_id = short_id(victim_id, "UNKNOWN"),
+killer_id = short_id(killer_name, "WORLD"),
+victim_id = short_id(victim_name, "UNKNOWN"),
 remaining = KILLFEED_LIFETIME
 }
 
@@ -734,7 +809,7 @@ COLOR_MENU_BORDER
 button.label = gui.new_text_node(vmath.vector3(0, 0, 1), label)
 gui.set_font(button.label, "default")
 gui.set_color(button.label, COLOR_MENU_TEXT)
-gui.set_scale(button.label, vmath.vector3(0.8, 0.8, 1))
+gui.set_scale(button.label, vmath.vector3(0.8 * TEXT_SCALE, 0.8 * TEXT_SCALE, 1))
 
 button.default_color = color
 
@@ -763,12 +838,12 @@ COLOR_MENU_PANEL
 self.menu_title = gui.new_text_node(vmath.vector3(0, 0, 1), "BATTLE PAUSED")
 gui.set_font(self.menu_title, "default")
 gui.set_color(self.menu_title, COLOR_MENU_BORDER)
-gui.set_scale(self.menu_title, vmath.vector3(1.0, 1.0, 1))
+gui.set_scale(self.menu_title, vmath.vector3(1.0 * TEXT_SCALE, 1.0 * TEXT_SCALE, 1))
 
 self.menu_subtitle = gui.new_text_node(vmath.vector3(0, 0, 1), "SELECT AN ACTION")
 gui.set_font(self.menu_subtitle, "default")
 gui.set_color(self.menu_subtitle, COLOR_MENU_MUTED)
-gui.set_scale(self.menu_subtitle, vmath.vector3(0.58, 0.58, 1))
+gui.set_scale(self.menu_subtitle, vmath.vector3(0.58 * TEXT_SCALE, 0.58 * TEXT_SCALE, 1))
 
 self.menu_resume_button = create_menu_button("RETURN TO BATTLE", COLOR_MENU_BUTTON)
 self.menu_leave_button = create_menu_button("LEAVE BATTLE", COLOR_MENU_DANGER)
@@ -1125,7 +1200,7 @@ text = string.sub(text, 1, CHAT_MAX_LENGTH)
 end
 
 table.insert(self.chat_entries, 1, {
-player_id = short_id(player_id, "UNKNOWN"),
+player_id = short_id((self.nickname_by_id and self.nickname_by_id[player_id]) or player_id, "UNKNOWN"),
 text = text
 })
 
@@ -1199,11 +1274,12 @@ local screen_width = gui.get_width()
 local screen_height = gui.get_height()
 local center_x = screen_width * 0.5
 
-local reload_y = BOTTOM_MARGIN + BAR_HEIGHT * 0.5
-local health_y = reload_y + BAR_HEIGHT + BAR_GAP
+local reload_y = screen_height - 24
+local health_y = screen_height - 12
+local bar_x = math.min(150, screen_width * 0.18)
 
-layout_bar(self.health_bar, center_x, health_y)
-layout_bar(self.reload_bar, center_x, reload_y)
+layout_bar(self.health_bar, bar_x, health_y)
+layout_bar(self.reload_bar, bar_x, reload_y)
 
 layout_scoreboard(self)
 layout_killfeed(self)
@@ -1227,7 +1303,7 @@ local function show_match_ending(self, duration_ms)
         )
         gui.set_font(self.match_ending_node, "default")
         gui.set_color(self.match_ending_node, vmath.vector4(1, 0.88, 0.48, 1))
-        gui.set_scale(self.match_ending_node, vmath.vector3(1.8, 1.8, 1))
+        gui.set_scale(self.match_ending_node, vmath.vector3(1.8 * TEXT_SCALE, 1.8 * TEXT_SCALE, 1))
         gui.set_pivot(self.match_ending_node, gui.PIVOT_CENTER)
     end
     gui.set_position(self.match_ending_node,
@@ -1291,6 +1367,12 @@ end
 -- =========================================================
 
 function init(self)
+self.local_nickname = nil
+self.nickname_by_id = {}
+local profile_ok, profile_data = pcall(function() return sys.load("player.save") end)
+if profile_ok and type(profile_data) == "table" and type(profile_data.nickname) == "string" then
+    self.local_nickname = profile_data.nickname
+end
 self.health = 100
 self.max_health = 100
 self.reload_progress = 1
@@ -1302,6 +1384,7 @@ gui.set_color(self.health_bar.fill, COLOR_HEALTH)
 gui.set_color(self.reload_bar.fill, COLOR_RELOAD)
 
 create_scoreboard(self)
+create_damage_direction_indicator(self)
 create_killfeed(self)
 create_match_timer(self)
 create_combat_feed(self)
@@ -1318,6 +1401,7 @@ msg.post(".", "acquire_input_focus")
 end
 
 function update(self, dt)
+update_damage_direction_indicator(self, dt)
 update_killfeed(self, dt)
 update_chat(self, dt)
 update_match_timer(self, dt)
@@ -1519,6 +1603,16 @@ set_bar_progress(
 self.health_bar,
 self.health / self.max_health
 )
+
+elseif message_id == hash("damage_direction") then
+    self.damage_direction_angle = tonumber(message.angle) or 0
+    self.damage_direction_time = self.damage_direction_duration or 0.9
+    print("[HUD] Damage direction indicator triggered")
+
+elseif message_id == hash("server_map_name") then
+    local name = tostring(message.name or "DEATHMATCH")
+    self.map_name = truncate_utf8(name, 28):upper()
+    gui.set_text(self.score_title, self.map_name)
 
 elseif message_id == hash("server_scoreboard_reset") then
 reset_server_scoreboard(self, message.count)
