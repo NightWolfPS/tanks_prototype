@@ -27,14 +27,26 @@ key_trigger {
   action: "space"
 }
 key_trigger {
-  input: KEY_K
-  action: "kill_tank"
-}
-key_trigger {
   input: KEY_TAB
   action: "show_scoreboard"
+}
+key_trigger {
+  input: KEY_ESC
+  action: "pause"
+}
+key_trigger {
+  input: KEY_ENTER
+  action: "chat"
+}
+key_trigger {
+  input: KEY_BACKSPACE
+  action: "erase"
 }
 mouse_trigger {
   input: MOUSE_BUTTON_1
   action: "touch"
+}
+text_trigger {
+  input: TEXT
+  action: "text_chat"
 }

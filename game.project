@@ -5,9 +5,10 @@ main_collection = /main/bootstrap.collectionc
 shared_state = 1
 
 [display]
-width = 960
-height = 640
+width = 1280
+height = 720
 high_dpi = 1
+fullscreen = 0
 
 [android]
 input_method = HiddenInputField
@@ -23,6 +24,19 @@ show_fullscreen_button = 0
 show_console_banner = 0
 
 [project]
-title = TankPrototype
+title = The tanks
+developer = tEm04ka
+version = 0.3.7
 dependencies#0 = https://github.com/defold/extension-websocket/archive/refs/tags/4.2.4.zip
+dependencies#1 = https://github.com/Insality/defold-event/archive/refs/tags/21.zip
+dependencies#2 = https://github.com/Insality/druid/archive/refs/tags/1.4.0.zip
+
+[render]
+clear_color_alpha = 1.0
+
+[library]
+include_dirs = defold-input-master\defold-input-master\in
+
+[collection_proxy]
+max_count = 64
 
